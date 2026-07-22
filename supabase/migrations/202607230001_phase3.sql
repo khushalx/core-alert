@@ -1,0 +1,547 @@
+begin;
+
+create extension if not exists pgcrypto;
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated;
+
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  full_name text not null,
+  phone text,
+  avatar_url text,
+  blood_group text,
+  allergies text,
+  medical_notes text,
+  preferred_language text not null default 'English',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create or replace function public.generate_invite_code()
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = public
+as $$
+declare
+  candidate text;
+begin
+  loop
+    candidate := 'CA-' || lpad((floor(random() * 10000))::integer::text, 4, '0');
+    exit when not exists (
+      select 1 from public.guardian_relationships where invite_code = candidate
+    );
+  end loop;
+  return candidate;
+end;
+$$;
+
+create table if not exists public.guardian_relationships (
+  id uuid primary key default gen_random_uuid(),
+  protected_user_id uuid not null references public.profiles(id) on delete cascade,
+  guardian_user_id uuid references public.profiles(id) on delete cascade,
+  guardian_name text not null,
+  guardian_email text,
+  guardian_phone text,
+  relationship text,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'removed')),
+  is_primary boolean not null default false,
+  invite_code text unique default public.generate_invite_code(),
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  constraint guardian_not_self check (guardian_user_id is null or protected_user_id <> guardian_user_id)
+);
+
+create unique index if not exists one_active_relationship_per_linked_guardian
+  on public.guardian_relationships(protected_user_id, guardian_user_id)
+  where guardian_user_id is not null and status <> 'removed';
+create unique index if not exists one_active_relationship_per_guardian_email
+  on public.guardian_relationships(protected_user_id, lower(guardian_email))
+  where guardian_email is not null and status <> 'removed';
+create unique index if not exists one_active_relationship_per_guardian_phone
+  on public.guardian_relationships(protected_user_id, regexp_replace(guardian_phone, '[^0-9]', '', 'g'))
+  where guardian_phone is not null and status <> 'removed';
+create unique index if not exists one_primary_guardian_per_user
+  on public.guardian_relationships(protected_user_id)
+  where is_primary and status <> 'removed';
+create index if not exists guardian_relationships_guardian_user_idx
+  on public.guardian_relationships(guardian_user_id, status);
+
+create or replace function private.guard_guardian_relationship_update()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() = old.protected_user_id then
+    if new.protected_user_id is distinct from old.protected_user_id
+      or new.guardian_user_id is distinct from old.guardian_user_id
+      or new.accepted_at is distinct from old.accepted_at then
+      raise exception 'LINK_FIELDS_ARE_SERVER_MANAGED';
+    end if;
+    if new.status is distinct from old.status and new.status <> 'removed' then
+      raise exception 'INVITATION_RESPONSE_IS_GUARDIAN_MANAGED';
+    end if;
+    if new.invite_code is distinct from old.invite_code
+      and not (new.status = 'removed' and new.invite_code is null) then
+      raise exception 'INVITE_CODE_IS_SERVER_MANAGED';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists guardian_relationships_protect_link_fields on public.guardian_relationships;
+create trigger guardian_relationships_protect_link_fields
+before update on public.guardian_relationships
+for each row execute function private.guard_guardian_relationship_update();
+
+create table if not exists public.incidents (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  status text not null default 'active' check (status in ('active', 'resolved', 'cancelled', 'false_alarm')),
+  activation_source text not null,
+  is_demo boolean not null default false,
+  started_at timestamptz not null default now(),
+  ended_at timestamptz,
+  incident_latitude double precision,
+  incident_longitude double precision,
+  last_latitude double precision,
+  last_longitude double precision,
+  location_accuracy double precision,
+  battery_level integer check (battery_level is null or battery_level between 0 and 100),
+  cancelled_during_countdown boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists incidents_user_started_idx on public.incidents(user_id, started_at desc);
+create index if not exists incidents_active_idx on public.incidents(user_id) where status = 'active';
+
+create table if not exists public.incident_locations (
+  id bigint generated by default as identity primary key,
+  incident_id uuid not null references public.incidents(id) on delete cascade,
+  latitude double precision not null,
+  longitude double precision not null,
+  accuracy double precision,
+  recorded_at timestamptz not null default now()
+);
+create index if not exists incident_locations_incident_recorded_idx
+  on public.incident_locations(incident_id, recorded_at);
+
+create table if not exists public.incident_guardians (
+  id uuid primary key default gen_random_uuid(),
+  incident_id uuid not null references public.incidents(id) on delete cascade,
+  guardian_user_id uuid not null references public.profiles(id) on delete cascade,
+  delivery_status text not null default 'pending' check (delivery_status in ('pending', 'delivered', 'failed')),
+  acknowledgement_status text not null default 'not_acknowledged' check (acknowledgement_status in ('not_acknowledged', 'seen', 'responding', 'cannot_respond')),
+  acknowledged_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(incident_id, guardian_user_id)
+);
+create index if not exists incident_guardians_guardian_idx
+  on public.incident_guardians(guardian_user_id, created_at desc);
+
+create table if not exists public.device_push_tokens (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  expo_push_token text not null,
+  platform text not null,
+  device_name text,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, expo_push_token)
+);
+
+create or replace function private.set_updated_at()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_set_updated_at on public.profiles;
+create trigger profiles_set_updated_at before update on public.profiles
+for each row execute function private.set_updated_at();
+drop trigger if exists incidents_set_updated_at on public.incidents;
+create trigger incidents_set_updated_at before update on public.incidents
+for each row execute function private.set_updated_at();
+drop trigger if exists incident_guardians_set_updated_at on public.incident_guardians;
+create trigger incident_guardians_set_updated_at before update on public.incident_guardians
+for each row execute function private.set_updated_at();
+drop trigger if exists device_push_tokens_set_updated_at on public.device_push_tokens;
+create trigger device_push_tokens_set_updated_at before update on public.device_push_tokens
+for each row execute function private.set_updated_at();
+
+create or replace function private.handle_new_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles(id, full_name, phone)
+  values (
+    new.id,
+    coalesce(nullif(trim(new.raw_user_meta_data ->> 'full_name'), ''), split_part(coalesce(new.email, 'Core Alert user'), '@', 1)),
+    nullif(trim(new.raw_user_meta_data ->> 'phone'), '')
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute function private.handle_new_auth_user();
+
+create or replace function private.is_accepted_guardian(target_user uuid, candidate_guardian uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.guardian_relationships
+    where protected_user_id = target_user
+      and guardian_user_id = candidate_guardian
+      and status = 'accepted'
+  );
+$$;
+
+create or replace function private.owns_incident(target_incident uuid, candidate_user uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.incidents where id = target_incident and user_id = candidate_user
+  );
+$$;
+
+create or replace function private.is_assigned_guardian(target_incident uuid, candidate_guardian uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.incident_guardians
+    where incident_id = target_incident and guardian_user_id = candidate_guardian
+  );
+$$;
+
+alter table public.profiles enable row level security;
+alter table public.guardian_relationships enable row level security;
+alter table public.incidents enable row level security;
+alter table public.incident_locations enable row level security;
+alter table public.incident_guardians enable row level security;
+alter table public.device_push_tokens enable row level security;
+
+drop policy if exists profiles_read_own on public.profiles;
+create policy profiles_read_own on public.profiles for select to authenticated
+using (id = (select auth.uid()));
+drop policy if exists profiles_update_own on public.profiles;
+create policy profiles_update_own on public.profiles for update to authenticated
+using (id = (select auth.uid())) with check (id = (select auth.uid()));
+
+drop policy if exists relationships_read_involved on public.guardian_relationships;
+create policy relationships_read_involved on public.guardian_relationships for select to authenticated
+using (
+  protected_user_id = (select auth.uid())
+  or guardian_user_id = (select auth.uid())
+  or (
+    guardian_user_id is null
+    and guardian_email is not null
+    and lower(guardian_email) = lower(coalesce((select auth.jwt() ->> 'email'), ''))
+  )
+);
+drop policy if exists relationships_create_owned on public.guardian_relationships;
+create policy relationships_create_owned on public.guardian_relationships for insert to authenticated
+with check (
+  protected_user_id = (select auth.uid())
+  and guardian_user_id is null
+  and status = 'pending'
+  and (
+    guardian_email is null
+    or lower(guardian_email) <> lower(coalesce((select auth.jwt() ->> 'email'), ''))
+  )
+);
+drop policy if exists relationships_update_owned on public.guardian_relationships;
+create policy relationships_update_owned on public.guardian_relationships for update to authenticated
+using (protected_user_id = (select auth.uid()))
+with check (protected_user_id = (select auth.uid()));
+drop policy if exists relationships_delete_owned on public.guardian_relationships;
+create policy relationships_delete_owned on public.guardian_relationships for delete to authenticated
+using (protected_user_id = (select auth.uid()));
+
+drop policy if exists incidents_read_allowed on public.incidents;
+create policy incidents_read_allowed on public.incidents for select to authenticated
+using (
+  user_id = (select auth.uid())
+  or private.is_assigned_guardian(id, (select auth.uid()))
+);
+drop policy if exists incidents_create_owned on public.incidents;
+create policy incidents_create_owned on public.incidents for insert to authenticated
+with check (user_id = (select auth.uid()));
+drop policy if exists incidents_update_owned on public.incidents;
+create policy incidents_update_owned on public.incidents for update to authenticated
+using (user_id = (select auth.uid()))
+with check (user_id = (select auth.uid()));
+
+drop policy if exists incident_locations_read_allowed on public.incident_locations;
+create policy incident_locations_read_allowed on public.incident_locations for select to authenticated
+using (
+  private.owns_incident(incident_id, (select auth.uid()))
+  or private.is_assigned_guardian(incident_id, (select auth.uid()))
+);
+drop policy if exists incident_locations_insert_owner_active on public.incident_locations;
+create policy incident_locations_insert_owner_active on public.incident_locations for insert to authenticated
+with check (
+  exists (
+    select 1 from public.incidents
+    where id = incident_id and user_id = (select auth.uid()) and status = 'active'
+  )
+);
+
+drop policy if exists incident_guardians_read_allowed on public.incident_guardians;
+create policy incident_guardians_read_allowed on public.incident_guardians for select to authenticated
+using (
+  guardian_user_id = (select auth.uid())
+  or private.owns_incident(incident_id, (select auth.uid()))
+);
+drop policy if exists incident_guardians_insert_owner on public.incident_guardians;
+create policy incident_guardians_insert_owner on public.incident_guardians for insert to authenticated
+with check (
+  private.owns_incident(incident_id, (select auth.uid()))
+  and exists (
+    select 1 from public.incidents i
+    where i.id = incident_id
+      and private.is_accepted_guardian(i.user_id, guardian_user_id)
+  )
+);
+
+drop policy if exists push_tokens_all_own on public.device_push_tokens;
+create policy push_tokens_all_own on public.device_push_tokens for all to authenticated
+using (user_id = (select auth.uid()))
+with check (user_id = (select auth.uid()));
+
+create or replace function public.get_guardian_profile_summary(target_profile_id uuid)
+returns table(id uuid, full_name text, phone text, avatar_url text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p.id, p.full_name, p.phone, p.avatar_url
+  from public.profiles p
+  where p.id = target_profile_id
+    and (
+      p.id = (select auth.uid())
+      or private.is_accepted_guardian(p.id, (select auth.uid()))
+    );
+$$;
+
+create or replace function public.respond_to_guardian_invitation(invitation_code text, decision text)
+returns setof public.guardian_relationships
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  invitation public.guardian_relationships%rowtype;
+  caller uuid := auth.uid();
+  caller_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if caller is null then raise exception 'AUTH_REQUIRED'; end if;
+  if decision not in ('accepted', 'declined') then raise exception 'INVALID_DECISION'; end if;
+
+  select * into invitation
+  from public.guardian_relationships
+  where invite_code = upper(trim(invitation_code)) and status = 'pending'
+  for update;
+
+  if not found then raise exception 'INVALID_OR_USED_INVITE'; end if;
+  if invitation.protected_user_id = caller then raise exception 'SELF_INVITE'; end if;
+  if invitation.guardian_email is not null and lower(invitation.guardian_email) <> caller_email then
+    raise exception 'INVITE_EMAIL_MISMATCH';
+  end if;
+  if exists (
+    select 1 from public.guardian_relationships
+    where protected_user_id = invitation.protected_user_id
+      and guardian_user_id = caller
+      and status <> 'removed'
+      and id <> invitation.id
+  ) then raise exception 'DUPLICATE_GUARDIAN'; end if;
+
+  update public.guardian_relationships
+  set guardian_user_id = case when decision = 'accepted' then caller else guardian_user_id end,
+      status = decision,
+      accepted_at = case when decision = 'accepted' then now() else null end,
+      invite_code = null
+  where id = invitation.id;
+
+  return query select * from public.guardian_relationships where id = invitation.id;
+end;
+$$;
+
+create or replace function public.preview_guardian_invitation(invitation_code text)
+returns table(relationship_id uuid, protected_user_name text, relationship text, created_at timestamptz)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  invitation public.guardian_relationships%rowtype;
+  caller uuid := auth.uid();
+  caller_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if caller is null then raise exception 'AUTH_REQUIRED'; end if;
+  select * into invitation from public.guardian_relationships
+  where invite_code = upper(trim(invitation_code)) and status = 'pending';
+  if not found then raise exception 'INVALID_OR_USED_INVITE'; end if;
+  if invitation.protected_user_id = caller then raise exception 'SELF_INVITE'; end if;
+  if invitation.guardian_email is not null and lower(invitation.guardian_email) <> caller_email then
+    raise exception 'INVITE_EMAIL_MISMATCH';
+  end if;
+  return query
+    select invitation.id, p.full_name, invitation.relationship, invitation.created_at
+    from public.profiles p where p.id = invitation.protected_user_id;
+end;
+$$;
+
+create or replace function public.set_primary_guardian(relationship_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  owner_id uuid;
+begin
+  select protected_user_id into owner_id from public.guardian_relationships where id = relationship_id;
+  if owner_id is null or owner_id <> auth.uid() then raise exception 'NOT_ALLOWED'; end if;
+  update public.guardian_relationships set is_primary = false
+  where protected_user_id = owner_id and id <> relationship_id;
+  update public.guardian_relationships set is_primary = true
+  where id = relationship_id and status <> 'removed';
+end;
+$$;
+
+create or replace function public.assign_incident_guardians(target_incident_id uuid)
+returns setof public.incident_guardians
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  owner_id uuid;
+begin
+  select user_id into owner_id from public.incidents
+  where id = target_incident_id and status = 'active';
+  if owner_id is null or owner_id <> auth.uid() then raise exception 'NOT_INCIDENT_OWNER'; end if;
+
+  insert into public.incident_guardians(incident_id, guardian_user_id)
+  select target_incident_id, guardian_user_id
+  from public.guardian_relationships
+  where protected_user_id = owner_id
+    and guardian_user_id is not null
+    and status = 'accepted'
+  on conflict (incident_id, guardian_user_id) do nothing;
+
+  return query select * from public.incident_guardians where incident_id = target_incident_id;
+end;
+$$;
+
+create or replace function public.acknowledge_incident(target_incident_id uuid, response text)
+returns setof public.incident_guardians
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then raise exception 'AUTH_REQUIRED'; end if;
+  if response not in ('seen', 'responding', 'cannot_respond') then raise exception 'INVALID_ACKNOWLEDGEMENT'; end if;
+
+  update public.incident_guardians
+  set acknowledgement_status = case
+        when acknowledgement_status in ('responding', 'cannot_respond') and response = 'seen'
+          then acknowledgement_status
+        else response
+      end,
+      acknowledged_at = case
+        when response in ('responding', 'cannot_respond') then now()
+        else acknowledged_at
+      end
+  where incident_id = target_incident_id and guardian_user_id = auth.uid();
+
+  if not found then raise exception 'NOT_ASSIGNED_GUARDIAN'; end if;
+  return query select * from public.incident_guardians
+    where incident_id = target_incident_id and guardian_user_id = auth.uid();
+end;
+$$;
+
+revoke all on all tables in schema public from anon;
+grant select, update on public.profiles to authenticated;
+grant select, insert, update, delete on public.guardian_relationships to authenticated;
+grant select, insert, update on public.incidents to authenticated;
+grant select, insert on public.incident_locations to authenticated;
+grant select, insert on public.incident_guardians to authenticated;
+grant select, insert, update, delete on public.device_push_tokens to authenticated;
+grant usage, select on sequence public.incident_locations_id_seq to authenticated;
+
+revoke all on function public.respond_to_guardian_invitation(text, text) from public;
+revoke all on function public.generate_invite_code() from public;
+revoke all on function public.set_primary_guardian(uuid) from public;
+revoke all on function public.assign_incident_guardians(uuid) from public;
+revoke all on function public.acknowledge_incident(uuid, text) from public;
+revoke all on function public.get_guardian_profile_summary(uuid) from public;
+revoke all on function public.preview_guardian_invitation(text) from public;
+grant execute on function public.respond_to_guardian_invitation(text, text) to authenticated;
+grant execute on function public.generate_invite_code() to authenticated;
+grant execute on function public.set_primary_guardian(uuid) to authenticated;
+grant execute on function public.assign_incident_guardians(uuid) to authenticated;
+grant execute on function public.acknowledge_incident(uuid, text) to authenticated;
+grant execute on function public.get_guardian_profile_summary(uuid) to authenticated;
+grant execute on function public.preview_guardian_invitation(text) to authenticated;
+grant usage on schema private to authenticated;
+grant execute on function private.is_accepted_guardian(uuid, uuid) to authenticated;
+grant execute on function private.owns_incident(uuid, uuid) to authenticated;
+grant execute on function private.is_assigned_guardian(uuid, uuid) to authenticated;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.incidents;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.incident_locations;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.incident_guardians;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.guardian_relationships;
+exception when duplicate_object then null;
+end $$;
+
+commit;

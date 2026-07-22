@@ -1,0 +1,4 @@
+project_id = "core-alert"
+
+[functions.send-sos-notifications]
+verify_jwt = true

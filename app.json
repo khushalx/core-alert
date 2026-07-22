@@ -1,22 +1,24 @@
 {
   "expo": {
-    "name": "core-alert",
+    "name": "Core Alert",
     "slug": "core-alert",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "corealert",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.corealert.prototype"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0B1F33",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "package": "com.corealert.prototype",
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -27,11 +29,30 @@
     "plugins": [
       "expo-router",
       [
+        "expo-dev-client",
+        {
+          "launchMode": "most-recent"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Core Alert to share your live location with assigned guardians during an active SOS."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#D92D20",
+          "defaultChannel": "sos-alerts"
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#0B1F33"
         }
       ]
     ],

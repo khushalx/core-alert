@@ -1,40 +1,23 @@
-import { Link, Stack } from 'expo-router';
-import { StyleSheet } from 'react-native';
+import { router } from 'expo-router';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { Text, View } from '@/components/Themed';
+import { Button } from '@/components/ui';
+import { colors } from '@/constants/theme';
 
 export default function NotFoundScreen() {
   return (
-    <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
-      <View style={styles.container}>
-        <Text style={styles.title}>This screen doesn't exist.</Text>
-
-        <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Go to home screen!</Text>
-        </Link>
-      </View>
-    </>
+    <View style={styles.screen}>
+      <Text style={styles.code}>404</Text>
+      <Text style={styles.title}>This screen is not available</Text>
+      <Text style={styles.message}>Return to your Core Alert home screen to continue.</Text>
+      <Button label="Go home" onPress={() => router.replace('/(tabs)')} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
-  },
-  linkText: {
-    fontSize: 14,
-    color: '#2e78b7',
-  },
+  screen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, padding: 24, gap: 10 },
+  code: { color: colors.red, fontSize: 16, fontWeight: '800', letterSpacing: 1 },
+  title: { color: colors.text, fontSize: 22, fontWeight: '800', textAlign: 'center' },
+  message: { color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 12 },
 });
