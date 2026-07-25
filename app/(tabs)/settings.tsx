@@ -1,15 +1,20 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { BottomSheet } from '@/components/BottomSheet';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { SettingRow } from '@/components/SettingRow';
 import { AppHeader, Button, Card, Screen, StatusBadge } from '@/components/ui';
 import { colors, radii, spacing } from '@/constants/theme';
+import { openDeviceSettings } from '@/services/deviceActionService';
 import { useHardwareTrigger } from '@/hooks/useHardwareTrigger';
 import { hardwareTriggerService } from '@/services/hardwareTriggerService';
+import {
+  openHardwareAccessibilitySettings,
+  requestNativeEvidencePermissions,
+} from '@/services/hardwareTriggerAdapter';
 import { useApp } from '@/store/AppContext';
 import { useAuth } from '@/store/AuthContext';
 import { useConnected } from '@/store/ConnectedContext';
@@ -54,6 +59,26 @@ export default function SettingsScreen() {
     if (!started) showToast('An SOS test is already running');
   };
 
+  const reviewEvidencePermissions = () => {
+    Alert.alert(
+      'Emergency evidence',
+      'During an SOS, Core Alert can record visible video with microphone audio, or audio only if the camera is unavailable. Android shows camera and microphone indicators plus a persistent notification. Recording starts only after you grant permission, and failure never blocks an SOS.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Review permissions',
+          onPress: () => {
+            void requestNativeEvidencePermissions().then(() => {
+              setTimeout(() => void hardwareTriggerService.refreshNativeDiagnostics(), 1_000);
+            }).catch((error) => {
+              showToast(error instanceof Error ? error.message : 'Evidence permissions could not be opened.');
+            });
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <Screen>
       <AppHeader title="Settings" subtitle="Safety preferences" />
@@ -91,13 +116,13 @@ export default function SettingsScreen() {
             icon="phone-portrait-outline"
             title="Haptic confirmation"
             subtitle="Feedback during important SOS moments"
-            trailing={<Switch value={state.preferences.hapticsEnabled} onValueChange={setHapticsEnabled} trackColor={{ false: colors.borderStrong, true: colors.navy }} thumbColor={colors.white} />}
+            trailing={<Switch value={state.preferences.hapticsEnabled} onValueChange={setHapticsEnabled} trackColor={{ false: colors.borderStrong, true: colors.blue }} thumbColor={colors.white} />}
           />
           <SettingRow
             icon="flask-outline"
             title="Demo mode"
             subtitle="Create real cloud incidents with clear demo labels"
-            trailing={<Switch value={state.preferences.demoModeEnabled} onValueChange={setDemoModeEnabled} trackColor={{ false: colors.borderStrong, true: colors.navy }} thumbColor={colors.white} />}
+            trailing={<Switch value={state.preferences.demoModeEnabled} onValueChange={setDemoModeEnabled} trackColor={{ false: colors.borderStrong, true: colors.blue }} thumbColor={colors.white} />}
           />
           <Button label="Run SOS test" variant="secondary" icon="flask-outline" onPress={runTest} style={styles.sectionButton} />
         </SettingsSection>
@@ -111,51 +136,74 @@ export default function SettingsScreen() {
         <SettingsSection title="Notifications">
           <SettingRow icon="notifications-outline" title="Permission" subtitle={notificationPermission === 'granted' ? 'Allowed on this device' : notificationPermission === 'denied' ? 'Permission denied' : 'Not configured'} trailing={<StatusBadge label={notificationPermission} tone={notificationPermission === 'granted' ? 'success' : 'warning'} />} onPress={() => { setNotificationLoading(true); void registerPush().catch((error) => showToast(error instanceof Error ? error.message : 'Notifications could not be configured.')).finally(() => setNotificationLoading(false)); }} />
           <SettingRow icon="cloud-done-outline" title="Push-token status" subtitle={notificationLoading ? 'Registering…' : pushMessage} trailing={<StatusBadge label={pushTokenState === 'registered' ? 'Ready' : pushTokenState === 'error' ? 'Error' : 'Not ready'} tone={pushTokenState === 'registered' ? 'success' : 'warning'} />} />
-          <SettingRow icon="settings-outline" title="Notification settings" subtitle="Open Core Alert system settings" onPress={() => Linking.openSettings()} />
+          <SettingRow icon="settings-outline" title="Notification settings" subtitle="Open Core Alert system settings" onPress={() => { void openDeviceSettings().catch((error) => showToast(error.message)); }} />
         </SettingsSection>
 
         <SettingsSection title="Your safety setup">
-          <SettingRow icon="location-outline" title="Location" subtitle={location.permission === 'granted' ? 'Foreground location available' : 'Permission needs attention'} trailing={<StatusBadge label={location.permission === 'granted' ? 'Ready' : 'Review'} tone={location.permission === 'granted' ? 'success' : 'warning'} />} onPress={() => router.push('/location-details')} />
+          <SettingRow icon="location-outline" title="Location" subtitle={location.permission === 'granted' ? 'Foreground ready • background optional' : 'Permission needs attention'} trailing={<StatusBadge label={location.permission === 'granted' ? 'Ready' : 'Review'} tone={location.permission === 'granted' ? 'success' : 'warning'} />} onPress={() => router.push('/location-details')} />
+          <SettingRow
+            icon="videocam-outline"
+            title="Emergency evidence"
+            subtitle={hardware.nativeDiagnostics.cameraPermissionGranted && hardware.nativeDiagnostics.microphonePermissionGranted
+              ? 'Video and audio ready for real SOS incidents'
+              : hardware.nativeDiagnostics.microphonePermissionGranted
+                ? 'Audio fallback ready • camera needs permission'
+                : 'Camera and microphone permission required'}
+            trailing={<StatusBadge
+              label={hardware.nativeDiagnostics.microphonePermissionGranted ? 'Ready' : 'Review'}
+              tone={hardware.nativeDiagnostics.microphonePermissionGranted ? 'success' : 'warning'}
+            />}
+            onPress={reviewEvidencePermissions}
+          />
           <SettingRow icon="medkit-outline" title="Emergency profile" subtitle={profile?.phone || profile?.blood_group ? 'Cloud profile details added' : 'Add contact and medical details'} onPress={() => router.push('/emergency-profile')} />
           <SettingRow icon="shield-outline" title="Privacy and location" subtitle="What this prototype stores and shares" onPress={() => router.push('/privacy')} />
-          <SettingRow icon="settings-outline" title="Device permissions" subtitle="Open Core Alert in device settings" onPress={() => Linking.openSettings()} />
+          <SettingRow icon="settings-outline" title="Device permissions" subtitle="Open Core Alert in device settings" onPress={() => { void openDeviceSettings().catch((error) => showToast(error.message)); }} />
         </SettingsSection>
 
         <SettingsSection title="Core Alert">
-          <SettingRow icon="information-circle-outline" title="About" subtitle="Version 1.0.0 • Phase 3" onPress={() => Alert.alert('About Core Alert', 'Connected guardian alerts and foreground live location sharing.\n\nPhase 3 hackathon prototype.')} />
-          <SettingRow icon="warning-outline" title="Safety and limitations" subtitle="Foreground location, no police dispatch, no SMS" onPress={() => Alert.alert('Current limitations', 'Continuous background protection is still under development.\n\nThe volume shortcut only works under the currently supported foreground conditions.\n\nPolice are not contacted automatically. SMS is not connected. Core Alert remains a hackathon prototype.')} />
+          <SettingRow icon="pulse-outline" title="System diagnostics" subtitle="Cloud, location, alerts, queue, and Android checks" onPress={() => router.push('/diagnostics')} />
+          <SettingRow icon="information-circle-outline" title="About" subtitle="Version 1.0.0 • Final hackathon prototype" onPress={() => Alert.alert('About Core Alert', 'Connected guardian alerts, foreground and consent-based Android background location, secure provider integrations, and a clearly simulated responder experience.')} />
+          <SettingRow icon="warning-outline" title="Safety and limitations" subtitle="Review Android and provider limitations" onPress={() => Alert.alert('Current limitations', 'The volume shortcut depends on enabled Accessibility permission, Core Alert protection, notification permission, and Android allowing the service to run. It can work while locked, backgrounded, or removed from recents, but it does not work after Settings → Apps → Core Alert → Force stop. Some manufacturers may also restrict or kill background services.\n\nBackground location works only during an active SOS after explicit permission and while Android permits the foreground service.\n\nPush and SMS require configured external providers. Core Alert does not dispatch police. The responder dashboard is a hackathon simulation.')} />
           <SettingRow icon="document-text-outline" title="Prototype terms" subtitle="Safety and emergency-service disclaimer" onPress={() => Alert.alert('Prototype terms', 'Core Alert is a demonstration and is not a replacement for official emergency services.')} />
           <SettingRow icon="refresh-outline" title="Reset demo data" subtitle="Restore guardians, profile, and test history" onPress={() => setResetVisible(true)} />
           {hasLocalDemoGuardians ? <SettingRow icon="trash-bin-outline" title="Remove local demo contacts" subtitle="Mock guardians are never uploaded to Supabase" onPress={removeLocalDemoData} /> : null}
         </SettingsSection>
 
-        <View style={styles.disclaimer}><Ionicons name="warning-outline" size={18} color="#B54708" /><Text style={styles.disclaimerText}>Prototype only — use official emergency services in real danger.</Text></View>
+        <View style={styles.brandArea}>
+          <Ionicons name="shield-checkmark-outline" size={22} color={colors.redDark} />
+          <View><Text style={styles.brandName}>CORE ALERT</Text><Text style={styles.brandTagline}>Every Second Counts.</Text></View>
+        </View>
+        <View style={styles.disclaimer}><Ionicons name="warning-outline" size={18} color={colors.amber} /><Text style={styles.disclaimerText}>Prototype only — use official emergency services in real danger.</Text></View>
       </ScrollView>
 
       <BottomSheet visible={shortcutVisible} title="Volume-down shortcut" onClose={() => setShortcutVisible(false)}>
         <View style={styles.shortcutToggle}>
           <View style={styles.shortcutToggleCopy}>
             <Text style={styles.shortcutToggleTitle}>Enable shortcut</Text>
-            <Text style={styles.shortcutToggleText}>{Platform.OS === 'ios' ? 'Android prototype only' : 'Listen while Core Alert is in the foreground'}</Text>
+            <Text style={styles.shortcutToggleText}>{Platform.OS === 'ios' ? 'Android prototype only' : 'Use five presses within three seconds'}</Text>
           </View>
           <Switch
             disabled={Platform.OS !== 'android'}
             value={Platform.OS === 'android' && state.preferences.hardwareShortcutEnabled}
             onValueChange={setHardwareShortcutEnabled}
-            trackColor={{ false: colors.borderStrong, true: colors.navy }}
+            trackColor={{ false: colors.borderStrong, true: colors.blue }}
             thumbColor={colors.white}
           />
         </View>
         <View style={styles.detailList}>
           <DetailRow label="Status" value={hardwareStatusLabel(hardware.status)} />
+          <DetailRow label="Accessibility permission" value={hardware.nativeDiagnostics.accessibilityEnabled ? 'Enabled' : 'Required'} />
+          <DetailRow label="Protection service" value={hardware.nativeDiagnostics.accessibilityConnected ? 'Connected' : 'Not connected'} />
+          <DetailRow label="Native cloud activation" value={hardware.nativeDiagnostics.cloudConfigured ? 'Ready' : 'Not configured'} />
           <DetailRow label="Trigger window" value={`${hardwareTriggerService.windowMs / 1000} seconds`} />
-          <DetailRow label="Compatibility" value={Platform.OS === 'android' ? 'Android development build' : 'Android prototype only'} />
+          <DetailRow label="Compatibility" value={Platform.OS === 'android' ? 'Android installed build' : 'Android prototype only'} />
         </View>
         <View style={styles.hapticRow}>
           <View><Text style={styles.shortcutToggleTitle}>Shortcut haptics</Text><Text style={styles.shortcutToggleText}>Subtle feedback during the sequence</Text></View>
-          <Switch value={state.preferences.hardwareHapticsEnabled} onValueChange={setHardwareHapticsEnabled} trackColor={{ false: colors.borderStrong, true: colors.navy }} thumbColor={colors.white} />
+          <Switch value={state.preferences.hardwareHapticsEnabled} onValueChange={setHardwareHapticsEnabled} trackColor={{ false: colors.borderStrong, true: colors.blue }} thumbColor={colors.white} />
         </View>
-        <View style={styles.foregroundNote}><Ionicons name="information-circle-outline" size={18} color={colors.navy} /><Text style={styles.foregroundText}>Foreground only. It will not work after force-close, process termination, suspension, or while the app is inactive.</Text></View>
+        <View style={styles.foregroundNote}><Ionicons name="information-circle-outline" size={18} color={colors.blueBright} /><Text style={styles.foregroundText}>Android can keep protection active while the app is locked, backgrounded, or removed from recents. It cannot work after a manual Force stop, if Accessibility or notifications are disabled, or if Android restricts the service.</Text></View>
+        <Button label="Open Accessibility settings" variant="secondary" icon="accessibility-outline" onPress={() => void openHardwareAccessibilitySettings()} style={styles.sheetAction} />
         <Button label="Test one button input" variant="secondary" icon="volume-low-outline" onPress={() => hardwareTriggerService.emitSimulatedPress()} style={styles.sheetAction} />
         <Button label="Open diagnostics" variant="ghost" icon="pulse-outline" onPress={() => { setShortcutVisible(false); router.push('/hardware-diagnostics'); }} />
       </BottomSheet>
@@ -176,7 +224,7 @@ export default function SettingsScreen() {
         </View>
       </BottomSheet>
 
-      <ConfirmationModal visible={resetVisible} title="Reset all demo data?" message="Guardians, profile details, preferences, and local test history will return to their starting state." confirmLabel="Reset data" destructive onCancel={() => setResetVisible(false)} onConfirm={async () => { setResetVisible(false); await resetDemoData(); }} />
+      <ConfirmationModal visible={resetVisible} title="Reset all demo data?" message="Guardians, profile details, preferences, and local test history will return to their starting state." confirmLabel="Reset data" destructive onCancel={() => setResetVisible(false)} onConfirm={async () => { setResetVisible(false); try { await resetDemoData(); } catch (error) { showToast(error instanceof Error ? error.message : 'Demo data could not be reset.'); } }} />
       <ConfirmationModal visible={signOutVisible} title="Sign out of Core Alert?" message="Cloud incidents and guardian links remain in your account. Local safety preferences stay on this device." confirmLabel="Sign out" onCancel={() => setSignOutVisible(false)} onConfirm={() => { setSignOutVisible(false); void signOut().then(() => router.replace('/welcome')).catch((error) => showToast(error instanceof Error ? error.message : 'Could not sign out.')); }} />
     </Screen>
   );
@@ -193,12 +241,15 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   content: { paddingHorizontal: spacing.lg, paddingBottom: 34, gap: 20 },
   sectionTitle: { color: colors.textSecondary, fontSize: 10, fontWeight: '800', letterSpacing: 0.8, marginBottom: 9 },
-  sectionCard: { paddingTop: 0, paddingBottom: 12 },
+  sectionCard: { paddingTop: 4, paddingBottom: 4, paddingHorizontal: 14 },
   sectionButton: { marginTop: 12 },
-  valuePill: { minWidth: 42, height: 30, paddingHorizontal: 8, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8EEF4' },
-  valueText: { color: colors.navy, fontSize: 12, fontWeight: '800' },
+  valuePill: { minWidth: 42, height: 30, paddingHorizontal: 8, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.blueSoft },
+  valueText: { color: colors.blueBright, fontSize: 12, fontWeight: '800' },
   disclaimer: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.amberSoft, borderRadius: radii.medium, padding: 13 },
-  disclaimerText: { color: '#B54708', fontSize: 11, lineHeight: 16, fontWeight: '600', flex: 1 },
+  disclaimerText: { color: colors.amber, fontSize: 11, lineHeight: 16, fontWeight: '600', flex: 1 },
+  brandArea: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 4 },
+  brandName: { color: colors.text, fontSize: 13, fontWeight: '900', letterSpacing: 1.5 },
+  brandTagline: { color: colors.textMuted, fontSize: 10, marginTop: 2, letterSpacing: 0.5 },
   shortcutToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   shortcutToggleCopy: { flex: 1 },
   shortcutToggleTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
@@ -208,13 +259,13 @@ const styles = StyleSheet.create({
   detailLabel: { color: colors.textSecondary, fontSize: 12 },
   detailValue: { color: colors.text, fontSize: 12, fontWeight: '700', textAlign: 'right', flexShrink: 1 },
   hapticRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 15 },
-  foregroundNote: { flexDirection: 'row', gap: 8, padding: 12, backgroundColor: '#EEF4F8', borderRadius: 12, marginTop: 16 },
+  foregroundNote: { flexDirection: 'row', gap: 8, padding: 12, backgroundColor: colors.blueSoft, borderRadius: 12, marginTop: 16 },
   foregroundText: { color: colors.textSecondary, fontSize: 11, lineHeight: 17, flex: 1 },
   sheetAction: { marginTop: 16 },
   sheetText: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginBottom: 16 },
   countdownOptions: { flexDirection: 'row', gap: 9, paddingBottom: 14 },
   countdownOption: { flex: 1, minHeight: 94, borderRadius: radii.medium, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
-  countdownOptionSelected: { backgroundColor: colors.navy, borderColor: colors.navy },
+  countdownOptionSelected: { backgroundColor: colors.blue, borderColor: colors.blue },
   countdownValue: { color: colors.text, fontSize: 24, fontWeight: '800' },
   countdownUnit: { color: colors.textSecondary, fontSize: 10, marginTop: 1, marginBottom: 5 },
   countdownValueSelected: { color: colors.white },

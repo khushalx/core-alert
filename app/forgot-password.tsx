@@ -46,6 +46,6 @@ export default function ForgotPasswordScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background }, flex: { flex: 1 }, content: { flex: 1, justifyContent: 'center', padding: spacing.xl },
   title: { color: colors.text, fontSize: 27, fontWeight: '800' }, subtitle: { color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 6, marginBottom: 18 },
-  card: { gap: 13 }, label: { color: colors.text, fontSize: 13, fontWeight: '700' }, input: { minHeight: 52, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radii.small, backgroundColor: colors.white, color: colors.text, paddingHorizontal: 13 },
+  card: { gap: 13 }, label: { color: colors.text, fontSize: 13, fontWeight: '700' }, input: { minHeight: 52, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radii.small, backgroundColor: colors.surfaceElevated, color: colors.text, paddingHorizontal: 13 },
   error: { color: colors.redDark, fontSize: 12 }, success: { color: '#067647', backgroundColor: colors.greenSoft, borderRadius: 10, padding: 10, fontSize: 12 },
 });

@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
   content: { flex: 1, justifyContent: 'center', padding: spacing.xl, gap: 16 },
   intro: { alignItems: 'center', marginBottom: 6 }, title: { color: colors.text, fontSize: 27, fontWeight: '800', marginTop: 16 }, subtitle: { color: colors.textSecondary, fontSize: 14, marginTop: 5 },
   card: { gap: 14 }, field: { gap: 7 }, label: { color: colors.text, fontSize: 13, fontWeight: '700' },
-  input: { minHeight: 52, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radii.small, backgroundColor: colors.white, color: colors.text, paddingHorizontal: 13, fontSize: 14 },
+  input: { minHeight: 52, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radii.small, backgroundColor: colors.surfaceElevated, color: colors.text, paddingHorizontal: 13, fontSize: 14 },
   error: { color: colors.redDark, fontSize: 12, lineHeight: 18 }, linkButton: { alignItems: 'center', padding: 8 }, link: { color: colors.navy, fontWeight: '700', fontSize: 13 },
   create: { alignItems: 'center', padding: 12 }, createText: { color: colors.textSecondary, fontSize: 13 }, createStrong: { color: colors.navy, fontWeight: '800' },
 });

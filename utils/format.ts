@@ -21,6 +21,17 @@ export function formatTime(value: string): string {
   }).format(new Date(value));
 }
 
+export function formatElapsedTime(seconds: number): string {
+  const totalSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
 export function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     day: 'numeric',
@@ -46,4 +57,3 @@ export function greeting(): string {
   if (hour < 18) return 'Good afternoon';
   return 'Good evening';
 }
-

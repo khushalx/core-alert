@@ -22,13 +22,13 @@ export function SettingRow({
   const content = (
     <>
       <View style={styles.icon}>
-        <Ionicons name={icon} size={20} color={disabled ? colors.textMuted : colors.navy} />
+        <Ionicons name={icon} size={20} color={disabled ? colors.textMuted : colors.blueBright} />
       </View>
       <View style={styles.copy}>
         <Text style={[styles.title, disabled && styles.disabled]}>{title}</Text>
         {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
-      {trailing ?? (onPress ? <Ionicons name="chevron-forward" size={18} color={colors.textMuted} /> : null)}
+      {trailing ?? (onPress ? <Ionicons name="chevron-forward" size={17} color={colors.textMuted} /> : null)}
     </>
   );
   if (!onPress) return <View style={styles.row}>{content}</View>;
@@ -52,11 +52,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  pressed: { opacity: 0.65 },
-  icon: { width: 40 },
+  pressed: { opacity: 0.72, backgroundColor: colors.surfacePressed },
+  icon: { width: 38, height: 38, borderRadius: 12, backgroundColor: colors.blueSoft, alignItems: 'center', justifyContent: 'center', marginRight: 11 },
   copy: { flex: 1, paddingRight: 12 },
   title: { color: colors.text, fontSize: 14, fontWeight: '600' },
   subtitle: { color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3 },
   disabled: { color: colors.textMuted },
 });
-

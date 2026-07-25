@@ -2,3 +2,15 @@ project_id = "core-alert"
 
 [functions.send-sos-notifications]
 verify_jwt = true
+
+[functions.process-incident-escalations]
+verify_jwt = false
+
+[functions.manage-native-protection]
+verify_jwt = true
+
+[functions.activate-native-sos]
+verify_jwt = false
+
+[functions.manage-native-evidence]
+verify_jwt = false

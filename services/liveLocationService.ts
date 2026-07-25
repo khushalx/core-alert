@@ -1,5 +1,6 @@
 import * as Location from 'expo-location';
 
+import { startBackgroundLocation, stopBackgroundLocation } from '@/services/backgroundLocationService';
 import { shouldPersistLocation, type IncidentPoint } from '@/services/incidentService';
 
 export type LiveLocationCallbacks = {
@@ -14,7 +15,7 @@ export class LiveLocationService {
 
   get active(): boolean { return this.subscription !== null; }
 
-  async start(callbacks: LiveLocationCallbacks): Promise<void> {
+  async start(incidentId: string, callbacks: LiveLocationCallbacks): Promise<{ backgroundEnabled: boolean }> {
     await this.stop();
     const permission = await Location.getForegroundPermissionsAsync();
     if (permission.status !== Location.PermissionStatus.GRANTED) {
@@ -37,6 +38,8 @@ export class LiveLocationService {
       this.previousAt = now;
       void callbacks.onLocation(point).catch(() => callbacks.onError('Live location will retry when the connection returns.'));
     });
+    const backgroundEnabled = await startBackgroundLocation(incidentId).catch(() => false);
+    return { backgroundEnabled };
   }
 
   async stop(): Promise<void> {
@@ -44,6 +47,7 @@ export class LiveLocationService {
     this.subscription = null;
     this.previous = null;
     this.previousAt = null;
+    await stopBackgroundLocation();
   }
 }
 

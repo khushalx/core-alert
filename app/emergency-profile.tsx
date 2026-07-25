@@ -96,7 +96,7 @@ const styles = StyleSheet.create({
   card: { paddingBottom: 3 },
   field: { marginBottom: 16 },
   label: { color: colors.text, fontSize: 13, fontWeight: '700', marginBottom: 7 },
-  input: { minHeight: 50, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radii.small, color: colors.text, backgroundColor: colors.white, paddingHorizontal: 13, fontSize: 14 },
+  input: { minHeight: 50, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radii.small, color: colors.text, backgroundColor: colors.surfaceElevated, paddingHorizontal: 13, fontSize: 14 },
   multiline: { minHeight: 88, paddingTop: 12, textAlignVertical: 'top' },
   error: { color: colors.redDark, backgroundColor: colors.redSoft, borderRadius: 10, padding: 11, fontSize: 12 },
 });

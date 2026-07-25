@@ -15,16 +15,19 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.navy,
+        tabBarActiveTintColor: colors.red,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', paddingTop: 2 },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '700', paddingTop: 1 },
         tabBarStyle: {
-          height: 68,
-          paddingTop: 8,
-          paddingBottom: 8,
-          backgroundColor: colors.white,
+          height: 72,
+          paddingTop: 9,
+          paddingBottom: 9,
+          backgroundColor: colors.backgroundSecondary,
           borderTopColor: colors.border,
+          borderTopWidth: 1,
+          elevation: 0,
         },
+        tabBarItemStyle: { borderRadius: 14 },
       }}>
       {(Object.keys(icons) as (keyof typeof icons)[]).map((name) => (
         <Tabs.Screen
@@ -32,8 +35,8 @@ export default function TabLayout() {
           name={name}
           options={{
             title: name === 'index' ? 'Home' : name[0].toUpperCase() + name.slice(1),
-            tabBarIcon: ({ color, focused, size }) => (
-              <Ionicons name={icons[name][focused ? 1 : 0]} color={color} size={size} />
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={icons[name][focused ? 1 : 0]} color={color} size={22} />
             ),
           }}
         />

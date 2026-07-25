@@ -156,6 +156,17 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    // Emergency evidence capture is fully native. Keep these dependencies in
+    // the Android app module so recording never depends on the JS runtime.
+    def cameraxVersion = "1.6.1"
+    implementation("androidx.camera:camera-camera2:${cameraxVersion}")
+    implementation("androidx.camera:camera-lifecycle:${cameraxVersion}")
+    implementation("androidx.camera:camera-video:${cameraxVersion}")
+    // 2.10.0 is the newest line compatible with this project's required
+    // compileSdk 36 / AGP 8.12 toolchain.
+    implementation("androidx.lifecycle:lifecycle-service:2.10.0")
+    implementation("androidx.work:work-runtime:2.11.2")
+
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
     def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true";

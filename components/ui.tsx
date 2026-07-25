@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, radii, spacing } from '@/constants/theme';
+import { colors, radii, shadows, spacing, typography } from '@/constants/theme';
 import { LogoMark } from '@/components/LogoMark';
 import { useApp } from '@/store/AppContext';
 import { useAuth } from '@/store/AuthContext';
@@ -30,7 +30,7 @@ export function AppHeader({ title, subtitle }: { title?: string; subtitle?: stri
   return (
     <View style={styles.header}>
       <View style={styles.headerIdentity}>
-        <LogoMark size={38} />
+        <LogoMark size={44} />
         <View style={styles.headerText}>
           {subtitle ? <Text style={styles.headerSubtitle}>{subtitle}</Text> : null}
           <Text style={styles.headerTitle}>{title ?? 'Core Alert'}</Text>
@@ -90,7 +90,7 @@ export function Button({
   style,
   ...props
 }: ButtonProps) {
-  const iconColor = variant === 'primary' || variant === 'danger' ? colors.white : colors.navy;
+  const iconColor = variant === 'primary' || variant === 'danger' ? colors.white : colors.text;
   return (
     <Pressable
       accessibilityRole="button"
@@ -125,7 +125,7 @@ export function EmptyState({
   return (
     <Card style={styles.emptyCard}>
       <View style={styles.emptyIcon}>
-        <Ionicons name={icon} size={26} color={colors.navy} />
+        <Ionicons name={icon} size={26} color={colors.blueBright} />
       </View>
       <Text style={styles.emptyTitle}>{title}</Text>
       <Text style={styles.emptyMessage}>{message}</Text>
@@ -137,7 +137,7 @@ export function EmptyState({
 export function LoadingState({ label = 'Loading Core Alert…' }: { label?: string }) {
   return (
     <View style={styles.loading}>
-      <ActivityIndicator size="large" color={colors.navy} />
+      <ActivityIndicator size="large" color={colors.red} />
       <Text style={styles.loadingText}>{label}</Text>
     </View>
   );
@@ -161,40 +161,41 @@ const badgeStyles = StyleSheet.create({
   success: { backgroundColor: colors.greenSoft },
   danger: { backgroundColor: colors.redSoft },
   warning: { backgroundColor: colors.amberSoft },
-  neutral: { backgroundColor: colors.background },
-  info: { backgroundColor: '#EEF4FF' },
+  neutral: { backgroundColor: colors.surfacePressed },
+  info: { backgroundColor: colors.blueSoft },
 });
 
 const badgeTextStyles = StyleSheet.create({
-  success: { color: '#067647' },
+  success: { color: colors.green },
   danger: { color: colors.redDark },
-  warning: { color: '#B54708' },
+  warning: { color: colors.amber },
   neutral: { color: colors.textSecondary },
-  info: { color: '#3538CD' },
+  info: { color: colors.blueBright },
 });
 
 const buttonStyles = StyleSheet.create({
-  primary: { backgroundColor: colors.navy, borderColor: colors.navy },
-  secondary: { backgroundColor: colors.white, borderColor: colors.borderStrong },
+  primary: { backgroundColor: colors.blue, borderColor: colors.blue },
+  secondary: { backgroundColor: colors.surfaceElevated, borderColor: colors.borderStrong },
   danger: { backgroundColor: colors.red, borderColor: colors.red },
   ghost: { backgroundColor: 'transparent', borderColor: 'transparent' },
 });
 
 const buttonTextStyles = StyleSheet.create({
   primary: { color: colors.white },
-  secondary: { color: colors.navy },
+  secondary: { color: colors.text },
   danger: { color: colors.white },
-  ghost: { color: colors.navy },
+  ghost: { color: colors.blueBright },
 });
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   card: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radii.large,
     padding: spacing.lg,
+    ...shadows.card,
   },
   header: {
     flexDirection: 'row',
@@ -205,19 +206,19 @@ const styles = StyleSheet.create({
   },
   headerIdentity: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   headerText: { marginLeft: spacing.sm, flex: 1 },
-  headerSubtitle: { color: colors.textSecondary, fontSize: 12, marginBottom: 2 },
-  headerTitle: { color: colors.text, fontSize: 17, lineHeight: 22, fontWeight: '700' },
+  headerSubtitle: { color: colors.textSecondary, ...typography.caption, marginBottom: 2 },
+  headerTitle: { color: colors.text, fontSize: 18, lineHeight: 23, fontWeight: '800' },
   avatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E8EEF4',
+    backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
-    borderColor: '#CCD8E3',
+    borderColor: colors.borderStrong,
   },
-  avatarText: { color: colors.navy, fontSize: 13, fontWeight: '800' },
+  avatarText: { color: colors.text, fontSize: 13, fontWeight: '800' },
   badge: { alignSelf: 'flex-start', borderRadius: radii.pill, paddingHorizontal: 10, paddingVertical: 5 },
   badgeText: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
   sectionHeader: {
@@ -227,7 +228,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '700' },
-  sectionAction: { color: colors.navy, fontSize: 14, fontWeight: '700' },
+  sectionAction: { color: colors.blueBright, fontSize: 14, fontWeight: '700' },
   button: {
     minHeight: 52,
     borderRadius: 14,
@@ -246,7 +247,7 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: '#E8EEF4',
+    backgroundColor: colors.blueSoft,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
@@ -278,7 +279,9 @@ const styles = StyleSheet.create({
     gap: 9,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: colors.navy,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
     borderRadius: 14,
   },
   toastText: { color: colors.white, fontSize: 13, lineHeight: 18, fontWeight: '600', flexShrink: 1 },

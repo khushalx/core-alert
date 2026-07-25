@@ -4,7 +4,10 @@ import {
   createHardwareTriggerAdapter,
   hasNativeHardwareModule,
   type HardwareButtonEvent,
+  type HardwareModuleType,
   type HardwareTriggerAdapter,
+  type NativeHardwareDiagnostics,
+  setNativePracticeMode,
   VOLUME_DOWN_KEY_CODE,
 } from '@/services/hardwareTriggerAdapter';
 import type { SOSActivationSource } from '@/types';
@@ -26,9 +29,13 @@ export type HardwareTriggerState = {
   status: HardwareTriggerStatus;
   appState: 'active' | 'background' | 'inactive' | 'unknown';
   nativeModuleAvailable: boolean;
+  nativeModuleType: HardwareModuleType;
+  nativeDiagnostics: NativeHardwareDiagnostics;
   shortcutEnabled: boolean;
+  sosBusy: boolean;
   practiceMode: boolean;
   lastNativeEvent: HardwareButtonEvent | null;
+  lastJavaScriptEventAt: number | null;
   lastSequenceResult: string;
   log: string[];
 };
@@ -41,7 +48,7 @@ export type HardwareTriggerContext = {
 };
 
 export type HardwareTriggerCallbacks = {
-  onActivate: (source: SOSActivationSource) => void | Promise<void>;
+  onActivate: (source: SOSActivationSource) => boolean | void | Promise<boolean | void>;
   onPress?: (pressCount: number) => void;
   onPracticeComplete?: () => void;
 };
@@ -57,6 +64,7 @@ export class HardwareTriggerService {
   private context: HardwareTriggerContext;
   private timeout: Timer | null = null;
   private activationLocked = false;
+  private lastNativeSequenceNumber: number | null = null;
   private subscribers = new Set<(state: HardwareTriggerState) => void>();
   private state: HardwareTriggerState;
 
@@ -86,9 +94,50 @@ export class HardwareTriggerService {
       status: Platform.OS === 'android' ? 'development-build-required' : 'unsupported',
       appState: 'unknown',
       nativeModuleAvailable,
+      nativeModuleType: this.adapter.moduleType,
+      nativeDiagnostics: {
+        moduleLoaded: false,
+        listening: false,
+        eventBusSubscriberCount: 0,
+        lastPhysicalEventTimestamp: null,
+        lastPhysicalKeyCode: null,
+        totalPhysicalPressesReceived: 0,
+        lastModuleEmitTimestamp: null,
+        totalEventsEmitted: 0,
+        accessibilityEnabled: false,
+        accessibilityConnected: false,
+        activityForeground: false,
+        protectionEnabled: false,
+        cloudConfigured: false,
+        configuredUserId: '',
+        installationId: '',
+        nativePressCount: 0,
+        lastNativePressTimestamp: null,
+        nativeCountdownActive: false,
+        pendingNativeActivationId: null,
+        pendingNativeActivationSource: null,
+        pendingNativeActivationCreatedAt: null,
+        pendingNativeActivationConsumedAt: null,
+        pendingNativeActivationStatus: '',
+        nativeLifecycleState: 'idle',
+        lastNativeLifecycleState: '',
+        nativeLifecycleUpdatedAt: null,
+        lastNativeActivationTimestamp: null,
+        lastNativeError: '',
+        activeNativeIncidentId: null,
+        nativeSosBusy: false,
+        evidenceStatus: 'unavailable',
+        evidenceMode: null,
+        evidenceLastError: '',
+        evidencePendingUploads: 0,
+        cameraPermissionGranted: false,
+        microphonePermissionGranted: false,
+      },
       shortcutEnabled: true,
+      sosBusy: false,
       practiceMode: false,
       lastNativeEvent: null,
+      lastJavaScriptEventAt: null,
       lastSequenceResult: 'Not started',
       log: [],
     };
@@ -110,8 +159,12 @@ export class HardwareTriggerService {
     this.context = { ...this.context, ...next };
     this.update({
       shortcutEnabled: this.context.enabled,
+      sosBusy: this.context.sosBusy,
       practiceMode: this.context.practiceMode,
     });
+    if (previous.practiceMode !== this.context.practiceMode) {
+      void setNativePracticeMode(this.context.practiceMode);
+    }
 
     if (!this.context.enabled || !this.context.foreground || this.context.sosBusy) {
       this.reset(
@@ -159,6 +212,7 @@ export class HardwareTriggerService {
         this.log('Foreground listener attached');
       }
       this.update({ status: 'ready', isSupported: true, isListening: true });
+      await this.refreshNativeDiagnostics();
     } catch (error) {
       this.update({ status: 'error', isListening: false });
       this.log(`Listener error: ${error instanceof Error ? error.message : 'unknown error'}`);
@@ -171,21 +225,49 @@ export class HardwareTriggerService {
     } finally {
       this.update({ isListening: false });
       this.log(reason);
+      await this.refreshNativeDiagnostics();
     }
   }
 
   handleNativeEvent = (event: HardwareButtonEvent): void => {
-    const previousEvent = this.state.lastNativeEvent;
-    this.update({ lastNativeEvent: event });
+    this.update({ lastNativeEvent: event, lastJavaScriptEventAt: Date.now() });
     this.log(`${event.simulated ? 'Simulated' : 'Native'} key ${event.keyCode}, ${event.action}, repeat ${event.repeatCount}`);
+    if (!event.simulated) void this.refreshNativeDiagnostics();
 
-    if (
-      previousEvent &&
-      previousEvent.timestamp === event.timestamp &&
-      previousEvent.keyCode === event.keyCode &&
-      previousEvent.action === event.action
-    ) {
-      this.result('Ignored duplicate native event');
+    if (!event.simulated && typeof event.nativeSequenceNumber === 'number') {
+      if (
+        this.lastNativeSequenceNumber !== null &&
+        event.nativeSequenceNumber <= this.lastNativeSequenceNumber
+      ) {
+        this.result('JavaScript rejected a duplicate native sequence number');
+        return;
+      }
+      this.lastNativeSequenceNumber = event.nativeSequenceNumber;
+    }
+
+    if (event.handledByNativeProtection) {
+      const pressCount = event.nativePressCount ?? 0;
+      this.update({
+        pressCount,
+        firstPressAt: null,
+        lastPressAt: event.timestamp,
+      });
+      this.callbacks.onPress?.(pressCount);
+      if (this.context.practiceMode && pressCount === this.threshold) {
+        this.callbacks.onPracticeComplete?.();
+        this.reset('Shortcut detected successfully');
+        return;
+      }
+      this.result(
+        pressCount === this.threshold
+          ? 'Native protection started the SOS countdown'
+          : `Native protection detected ${pressCount} of ${this.threshold} presses`,
+      );
+      return;
+    }
+
+    if (!event.simulated) {
+      this.result('Ignored physical event not claimed by the native sequence manager');
       return;
     }
 
@@ -223,9 +305,7 @@ export class HardwareTriggerService {
     if (pressCount === 1) this.armTimeout();
     if (pressCount < this.threshold) return;
 
-    const simulatedSource: SOSActivationSource = event.simulated
-      ? 'developer-simulation'
-      : 'volume-shortcut';
+    const simulatedSource: SOSActivationSource = 'developer-simulation';
     if (this.context.practiceMode) {
       this.callbacks.onPracticeComplete?.();
       this.reset('Shortcut detected successfully');
@@ -235,8 +315,20 @@ export class HardwareTriggerService {
     this.activationLocked = true;
     this.clearTimer();
     this.update({ pressCount: 0, firstPressAt: null, lastPressAt: null });
-    this.result('SOS countdown activated');
-    void this.callbacks.onActivate(simulatedSource);
+    this.result('Five presses completed; requesting SOS countdown');
+    void Promise.resolve(this.callbacks.onActivate(simulatedSource))
+      .then((activated) => {
+        if (activated === false) {
+          this.activationLocked = false;
+          this.result('Five presses completed but SOS activation failed');
+          return;
+        }
+        this.result('Five presses completed; SOS countdown started');
+      })
+      .catch(() => {
+        this.activationLocked = false;
+        this.result('Five presses completed but SOS activation failed');
+      });
   };
 
   emitSimulatedPress(overrides: Partial<HardwareButtonEvent> = {}): void {
@@ -246,9 +338,27 @@ export class HardwareTriggerService {
       action: 'down',
       repeatCount: 0,
       isRepeat: false,
+      nativeSequenceNumber: undefined,
       simulated: true,
       ...overrides,
     });
+  }
+
+  async refreshNativeDiagnostics(): Promise<void> {
+    try {
+      const nativeDiagnostics = await this.adapter.getDiagnostics();
+      this.update({
+        nativeDiagnostics,
+        nativeModuleAvailable: nativeDiagnostics.moduleLoaded || this.state.nativeModuleAvailable,
+      });
+    } catch (error) {
+      this.log(`Native diagnostics unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  async reattach(): Promise<void> {
+    await this.detach('Diagnostic listener detached for reattach');
+    await this.verifyAndAttach();
   }
 
   reset(reason = 'Sequence reset', releaseActivationLock = false): void {
@@ -279,6 +389,7 @@ export class HardwareTriggerService {
 
   private log(message: string): void {
     const entry = `${new Date().toISOString()}  ${message}`;
+    if (__DEV__) console.log(`[CoreAlertVolume] ${message}`);
     this.update({ log: [entry, ...this.state.log].slice(0, 30) });
   }
 

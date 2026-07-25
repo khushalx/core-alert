@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml:2:13-83
+INJECTED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml:2:13-83
+	package
+		INJECTED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml
+	xmlns:android
+		ADDED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml:2:23-81
+uses-sdk
+INJECTED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml reason: use-sdk injection requested
+INJECTED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml
+INJECTED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml
+	android:targetSdkVersion
+		INJECTED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml
+	android:minSdkVersion
+		INJECTED from /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest17315337001992300718.xml

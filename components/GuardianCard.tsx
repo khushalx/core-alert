@@ -8,7 +8,7 @@ import { initials } from '@/utils/format';
 
 export function GuardianCard({ guardian, onPress }: { guardian: GuardianRelationship; onPress: () => void }) {
   const status = guardian.status === 'accepted'
-    ? 'Ready'
+    ? 'Connected'
     : guardian.status === 'declined'
       ? 'Declined'
       : guardian.guardian_email
@@ -18,7 +18,10 @@ export function GuardianCard({ guardian, onPress }: { guardian: GuardianRelation
   return (
     <Card style={styles.card}>
       <Pressable accessibilityRole="button" accessibilityLabel={`View ${guardian.guardian_name} details`} onPress={onPress} style={({ pressed }) => [styles.mainAction, pressed && styles.pressed]}>
-        <View style={styles.avatar}><Text style={styles.avatarText}>{initials(guardian.guardian_name)}</Text></View>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials(guardian.guardian_name)}</Text>
+          {guardian.status === 'accepted' ? <View style={styles.connectedDot} /> : null}
+        </View>
         <View style={styles.copy}>
           <View style={styles.nameRow}><Text style={styles.name}>{guardian.guardian_name}</Text>{guardian.is_primary ? <StatusBadge label="Primary" tone="info" /> : null}</View>
           <Text style={styles.relationship}>{guardian.relationship || 'Trusted contact'}</Text>
@@ -33,7 +36,9 @@ export function GuardianCard({ guardian, onPress }: { guardian: GuardianRelation
 const styles = StyleSheet.create({
   card: { marginBottom: 12, padding: 0, overflow: 'hidden' },
   mainAction: { flexDirection: 'row', alignItems: 'center', padding: 16 }, pressed: { opacity: 0.65, backgroundColor: colors.background },
-  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#E8EEF4', alignItems: 'center', justifyContent: 'center' }, avatarText: { color: colors.navy, fontSize: 13, fontWeight: '800' },
+  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.blueSoft, borderWidth: 1, borderColor: colors.navySoft, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: colors.blueBright, fontSize: 13, fontWeight: '800' },
+  connectedDot: { position: 'absolute', right: 1, bottom: 2, width: 11, height: 11, borderRadius: 6, backgroundColor: colors.green, borderWidth: 2, borderColor: colors.surface },
   copy: { flex: 1, marginHorizontal: 12 }, nameRow: { flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }, name: { color: colors.text, fontSize: 16, fontWeight: '700' },
   relationship: { color: colors.textSecondary, fontSize: 12, marginTop: 3 }, badges: { flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap' },
 });

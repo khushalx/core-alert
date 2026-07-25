@@ -53,7 +53,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(11,31,51,0.56)',
   },
-  sheet: { backgroundColor: colors.white, borderRadius: radii.large, padding: spacing.xl },
+  sheet: { backgroundColor: colors.surface, borderRadius: radii.large, borderWidth: 1, borderColor: colors.borderStrong, padding: spacing.xl },
   title: { color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: '800' },
   message: { color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 9 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 24 },

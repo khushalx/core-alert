@@ -52,24 +52,40 @@ export type AppPreferences = {
   demoModeEnabled: boolean;
 };
 
+type ActiveSosState = {
+  activationId: string | null;
+  startedAt: string;
+  incidentCoordinates: Coordinates | null;
+  source: SOSActivationSource;
+  incidentId: string | null;
+  isDemo: boolean;
+  locationStatus: 'sharing' | 'reconnecting' | 'unavailable';
+  guardianStatus: 'assigning' | 'alerting' | 'ready' | 'none' | 'failed';
+  issues: string[];
+};
+
 export type SosState =
   | { stage: 'idle' }
   | {
       stage: 'countdown';
+      activationId: string;
       startedAt: string;
       duration: number;
       source: SOSActivationSource;
     }
   | {
-      stage: 'active';
+      stage: 'activating';
+      activationId: string;
       startedAt: string;
-      incidentCoordinates: Coordinates | null;
       source: SOSActivationSource;
-      incidentId: string | null;
-      isDemo: boolean;
-      locationStatus: 'sharing' | 'reconnecting' | 'unavailable';
-      guardianStatus: 'assigning' | 'alerting' | 'ready' | 'none' | 'failed';
-      issues: string[];
+    }
+  | ({ stage: 'active' } & ActiveSosState)
+  | ({ stage: 'ending' } & ActiveSosState)
+  | ({ stage: 'ending_failed' } & ActiveSosState)
+  | {
+      stage: 'resolved';
+      incidentId: string;
+      endedAt: string;
     };
 
 export type PersistedAppState = {

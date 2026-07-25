@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+  <!-- Emergency recordings must never enter Android cloud backup. -->
+  <exclude domain="file" path="emergency_evidence/"/>
+</full-backup-content>

@@ -12,6 +12,7 @@ import {
 } from '@/services/authService';
 import { installSupabaseAppStateRefresh, isSupabaseConfigured, supabase } from '@/services/supabase';
 import { deactivatePushTokens } from '@/services/notificationService';
+import { revokeNativeProtection } from '@/services/nativeProtectionService';
 import type { CloudProfile } from '@/types/cloud';
 
 type AuthContextValue = {
@@ -91,7 +92,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const signOut = useCallback(async () => {
     if (!supabase) return;
-    if (session?.user.id) await deactivatePushTokens(session.user.id).catch(() => undefined);
+    if (session?.user.id) {
+      await Promise.all([
+        deactivatePushTokens(session.user.id).catch(() => undefined),
+        revokeNativeProtection().catch(() => undefined),
+      ]);
+    }
     const { error: signOutError } = await supabase.auth.signOut();
     if (signOutError) throw new Error('Core Alert could not sign you out. Try again.');
     setSession(null);

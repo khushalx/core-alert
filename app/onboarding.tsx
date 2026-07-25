@@ -51,14 +51,14 @@ export default function OnboardingScreen() {
           <View style={styles.iconCircle}>
             <Ionicons name="location" size={42} color={colors.navy} />
           </View>
-          <StatusBadge label="FOREGROUND ACCESS ONLY" tone="info" />
+          <StatusBadge label="ACTIVE SOS ONLY" tone="info" />
           <Text style={styles.title}>Share where help is needed.</Text>
           <Text style={styles.message}>
             During an SOS, Core Alert uses your location to capture the incident point and show your movement to trusted guardians.
           </Text>
           <View style={styles.privacyRow}>
             <Ionicons name="lock-closed-outline" size={19} color={colors.green} />
-            <Text style={styles.privacyText}>Continuous background location is not implemented in Phase 3.</Text>
+            <Text style={styles.privacyText}>Background sharing is optional, requested separately, and stops when the SOS ends.</Text>
           </View>
           {location.permission === 'denied' ? (
             <Text style={styles.warning}>Permission was not granted. You can still finish setup and enable it later.</Text>
@@ -140,19 +140,19 @@ const styles = StyleSheet.create({
     borderRadius: radii.medium,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.white,
+    backgroundColor: colors.surface,
     padding: 16,
     marginTop: 28,
   },
   promiseCopy: { flex: 1, marginLeft: 12 },
   promiseTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   promiseText: { color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 4 },
-  iconCircle: { width: 86, height: 86, borderRadius: 43, backgroundColor: '#E8EEF4', alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
+  iconCircle: { width: 86, height: 86, borderRadius: 43, backgroundColor: colors.blueSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
   privacyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 24 },
   privacyText: { color: colors.textSecondary, fontSize: 12, flexShrink: 1 },
-  warning: { color: '#B54708', backgroundColor: colors.amberSoft, borderRadius: 10, padding: 10, fontSize: 12, lineHeight: 17, marginTop: 16 },
+  warning: { color: colors.amber, backgroundColor: colors.amberSoft, borderRadius: 10, padding: 10, fontSize: 12, lineHeight: 17, marginTop: 16 },
   steps: { alignSelf: 'stretch', marginTop: 24, gap: 10 },
-  shortcutStep: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.white, borderRadius: radii.medium, borderWidth: 1, borderColor: colors.border, padding: 12 },
+  shortcutStep: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: radii.medium, borderWidth: 1, borderColor: colors.border, padding: 12 },
   stepNumber: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
   stepNumberText: { color: colors.white, fontSize: 12, fontWeight: '800' },
   stepIcon: { width: 40, alignItems: 'center' },

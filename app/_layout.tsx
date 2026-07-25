@@ -7,6 +7,7 @@ import { colors } from '@/constants/theme';
 import { AppProvider } from '@/store/AppContext';
 import { AuthProvider } from '@/store/AuthContext';
 import { ConnectedProvider } from '@/store/ConnectedContext';
+import '@/services/backgroundLocationService';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -15,12 +16,12 @@ export default function RootLayout() {
     <AuthProvider>
       <AppProvider>
         <ConnectedProvider>
-          <StatusBar style="dark" />
+          <StatusBar style="light" />
           <Stack
             screenOptions={{
               headerShadowVisible: false,
               headerStyle: { backgroundColor: colors.background },
-              headerTintColor: colors.navy,
+              headerTintColor: colors.text,
               headerTitleStyle: { color: colors.text, fontWeight: '700' },
               contentStyle: { backgroundColor: colors.background },
             }}>
@@ -42,7 +43,9 @@ export default function RootLayout() {
             <Stack.Screen name="privacy" options={{ title: 'Privacy' }} />
             <Stack.Screen name="shortcut-tutorial" options={{ title: 'How the shortcut works' }} />
             <Stack.Screen name="hardware-diagnostics" options={{ title: 'Diagnostics' }} />
+            <Stack.Screen name="diagnostics" options={{ title: 'System diagnostics' }} />
             <Stack.Screen name="incident/[id]" options={{ title: 'Incident details' }} />
+            <Stack.Screen name="responder-simulation/[id]" options={{ title: 'Responder simulation' }} />
           </Stack>
           <SosOverlay />
           <Toast />

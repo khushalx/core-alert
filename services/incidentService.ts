@@ -1,7 +1,14 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { friendlySupabaseError, requireSupabase } from '@/services/supabase';
-import type { CloudIncident, IncidentGuardian, IncidentLocation } from '@/types/cloud';
+import type {
+  CloudIncident,
+  IncidentEscalationEvent,
+  IncidentEvidence,
+  IncidentGuardian,
+  IncidentLocation,
+  IncidentRecipient,
+} from '@/types/cloud';
 import type { SOSActivationSource } from '@/types';
 
 export type IncidentPoint = {
@@ -12,6 +19,7 @@ export type IncidentPoint = {
 };
 
 export type CreateIncidentInput = {
+  activationId: string;
   activationSource: SOSActivationSource;
   isDemo: boolean;
   location?: IncidentPoint | null;
@@ -57,6 +65,20 @@ export async function createIncident(input: CreateIncidentInput): Promise<CloudI
   const client = requireSupabase();
   const userId = await currentUserId();
   const status = input.status ?? 'active';
+  if (status === 'active') {
+    const { data, error } = await client.rpc('create_or_restore_incident', {
+      activation_id: input.activationId,
+      requested_activation_source: input.activationSource,
+      requested_is_demo: input.isDemo,
+      requested_latitude: input.location?.latitude ?? null,
+      requested_longitude: input.location?.longitude ?? null,
+      requested_accuracy: input.location?.accuracy ?? null,
+    });
+    if (error || !data) {
+      throw new Error(friendlySupabaseError(error, 'The SOS incident could not be created.'));
+    }
+    return data;
+  }
   const { data, error } = await client.from('incidents').insert({
     user_id: userId,
     status,
@@ -68,6 +90,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<CloudI
     last_longitude: input.location?.longitude ?? null,
     location_accuracy: input.location?.accuracy ?? null,
     cancelled_during_countdown: Boolean(input.cancelledDuringCountdown),
+    native_activation_id: input.activationId,
     ended_at: status === 'cancelled' ? new Date().toISOString() : null,
   }).select('*').single();
   if (error) throw new Error(friendlySupabaseError(error, 'The SOS incident could not be created.'));
@@ -87,20 +110,14 @@ export async function createIncident(input: CreateIncidentInput): Promise<CloudI
 
 export async function updateIncidentLocation(incidentId: string, point: IncidentPoint): Promise<void> {
   const client = requireSupabase();
-  const { error: updateError } = await client.from('incidents').update({
-    last_latitude: point.latitude,
-    last_longitude: point.longitude,
-    location_accuracy: point.accuracy,
-  }).eq('id', incidentId).eq('status', 'active');
-  if (updateError) throw new Error(friendlySupabaseError(updateError, 'The latest location could not be shared.'));
-  const { error: insertError } = await client.from('incident_locations').insert({
-    incident_id: incidentId,
-    latitude: point.latitude,
-    longitude: point.longitude,
-    accuracy: point.accuracy,
-    recorded_at: point.recordedAt ?? new Date().toISOString(),
+  const { error } = await client.rpc('append_active_incident_location', {
+    target_incident_id: incidentId,
+    requested_latitude: point.latitude,
+    requested_longitude: point.longitude,
+    requested_accuracy: point.accuracy,
+    requested_recorded_at: point.recordedAt ?? new Date().toISOString(),
   });
-  if (insertError) throw new Error(friendlySupabaseError(insertError, 'The location history could not be updated.'));
+  if (error) throw new Error(friendlySupabaseError(error, 'The latest location could not be shared.'));
 }
 
 export async function assignGuardiansToIncident(incidentId: string): Promise<IncidentGuardian[]> {
@@ -112,10 +129,40 @@ export async function assignGuardiansToIncident(incidentId: string): Promise<Inc
 
 export async function resolveIncident(incidentId: string): Promise<CloudIncident> {
   const client = requireSupabase();
-  const { data, error } = await client.from('incidents').update({ status: 'resolved', ended_at: new Date().toISOString() })
-    .eq('id', incidentId).eq('status', 'active').select('*').single();
-  if (error) throw new Error(friendlySupabaseError(error, 'The SOS could not be ended.'));
-  return data;
+  const { data: rpcData, error: rpcError } = await client.rpc('resolve_incident_idempotent', {
+    target_incident_id: incidentId,
+  });
+  if (!rpcError && rpcData) return rpcData;
+
+  // Older backend deployments may not have the reliability RPC yet. The
+  // owner-only incidents RLS policy still makes this direct update safe, and
+  // the status predicate keeps it idempotent.
+  const endedAt = new Date().toISOString();
+  const { data: updated, error: updateError } = await client
+    .from('incidents')
+    .update({ status: 'resolved', ended_at: endedAt })
+    .eq('id', incidentId)
+    .eq('status', 'active')
+    .select('*')
+    .maybeSingle();
+  if (updateError) {
+    throw new Error(friendlySupabaseError(updateError, 'The SOS could not be ended.'));
+  }
+  if (updated) return updated;
+
+  // A retry can arrive after the first request resolved the row but before the
+  // response reached the device. Treat an already-resolved owned row as
+  // success instead of trapping the UI in ENDING_FAILED.
+  const { data: existing, error: readError } = await client
+    .from('incidents')
+    .select('*')
+    .eq('id', incidentId)
+    .maybeSingle();
+  if (readError) {
+    throw new Error(friendlySupabaseError(readError, 'The SOS could not be ended.'));
+  }
+  if (existing?.status === 'resolved') return existing;
+  throw new Error(friendlySupabaseError(rpcError, 'The SOS could not be ended.'));
 }
 
 export async function cancelIncident(incidentId: string): Promise<CloudIncident> {
@@ -182,16 +229,75 @@ export async function acknowledgeIncident(incidentId: string, response: 'seen' |
   return assignment;
 }
 
-export async function sendIncidentNotifications(incidentId: string): Promise<{ delivered: number; failed: number }> {
+export async function acknowledgeIncidentFromNotification(
+  incidentId: string,
+  response: 'seen' | 'responding' | 'cannot_respond' | 'open_location',
+): Promise<IncidentGuardian | null> {
+  const client = requireSupabase();
+  const { data, error } = await client.rpc('acknowledge_incident_from_notification', {
+    target_incident_id: incidentId,
+    response,
+  });
+  if (error) throw new Error(friendlySupabaseError(error, 'Your notification response could not be shared.'));
+  return data?.[0] ?? null;
+}
+
+export async function sendIncidentNotifications(incidentId: string): Promise<{ delivered: number; failed: number; smsSent: number }> {
   const client = requireSupabase();
   const { data, error } = await client.functions.invoke('send-sos-notifications', { body: { incidentId } });
   if (error) throw new Error(friendlySupabaseError(error, 'Guardian notifications could not be delivered.'));
-  return { delivered: Number(data?.delivered ?? 0), failed: Number(data?.failed ?? 0) };
+  return { delivered: Number(data?.delivered ?? 0), failed: Number(data?.failed ?? 0), smsSent: Number(data?.smsSent ?? 0) };
+}
+
+export async function getIncidentRecipients(incidentId: string): Promise<IncidentRecipient[]> {
+  const client = requireSupabase();
+  const { data, error } = await client.from('incident_recipients').select('*').eq('incident_id', incidentId)
+    .order('is_primary', { ascending: false }).order('created_at');
+  if (error) throw new Error(friendlySupabaseError(error, 'Guardian delivery details could not be loaded.'));
+  return data ?? [];
+}
+
+export async function getIncidentEscalationEvents(incidentId: string): Promise<IncidentEscalationEvent[]> {
+  const client = requireSupabase();
+  const { data, error } = await client.from('incident_escalation_events').select('*').eq('incident_id', incidentId).order('created_at');
+  if (error) throw new Error(friendlySupabaseError(error, 'Incident escalation details could not be loaded.'));
+  return data ?? [];
+}
+
+export async function getIncidentEvidence(incidentId: string): Promise<IncidentEvidence[]> {
+  const client = requireSupabase();
+  const { data, error } = await client.from('incident_evidence')
+    .select('*')
+    .eq('incident_id', incidentId)
+    .eq('status', 'uploaded')
+    .order('captured_at', { ascending: false });
+  if (error) throw new Error(friendlySupabaseError(error, 'Emergency evidence could not be loaded.'));
+  return data ?? [];
+}
+
+export async function createIncidentEvidenceUrl(evidence: IncidentEvidence): Promise<string> {
+  const client = requireSupabase();
+  const { data, error } = await client.storage
+    .from('incident-evidence')
+    .createSignedUrl(evidence.storage_path, 5 * 60);
+  if (error || !data?.signedUrl) {
+    throw new Error(friendlySupabaseError(error, 'A secure evidence link could not be created.'));
+  }
+  return data.signedUrl;
+}
+
+export async function recordResponderSimulation(
+  incidentId: string,
+  status: 'received' | 'reviewing' | 'dispatched_simulation' | 'closed',
+): Promise<void> {
+  const client = requireSupabase();
+  const { error } = await client.rpc('record_responder_simulation', { target_incident_id: incidentId, simulated_status: status });
+  if (error) throw new Error(friendlySupabaseError(error, 'The simulated responder status could not be saved.'));
 }
 
 function subscribe(
   name: string,
-  table: 'incidents' | 'incident_locations' | 'incident_guardians',
+  table: 'incidents' | 'incident_locations' | 'incident_guardians' | 'incident_recipients' | 'incident_escalation_events' | 'notification_deliveries' | 'incident_evidence',
   filter: string,
   callback: () => void,
   onStatus?: (status: 'connected' | 'reconnecting' | 'offline') => void,
@@ -220,6 +326,27 @@ export function subscribeToIncidentLocations(incidentId: string, callback: () =>
 
 export function subscribeToIncidentGuardians(incidentId: string, callback: () => void, onStatus?: (status: 'connected' | 'reconnecting' | 'offline') => void): () => void {
   return subscribe(`guardians:${incidentId}:${Date.now()}`, 'incident_guardians', `incident_id=eq.${incidentId}`, callback, onStatus);
+}
+
+export function subscribeToIncidentDelivery(incidentId: string, callback: () => void, onStatus?: (status: 'connected' | 'reconnecting' | 'offline') => void): () => void {
+  const stopRecipients = subscribe(`recipients:${incidentId}:${Date.now()}`, 'incident_recipients', `incident_id=eq.${incidentId}`, callback, onStatus);
+  const stopEscalations = subscribe(`escalations:${incidentId}:${Date.now()}`, 'incident_escalation_events', `incident_id=eq.${incidentId}`, callback, onStatus);
+  const stopNotifications = subscribe(`notification-deliveries:${incidentId}:${Date.now()}`, 'notification_deliveries', `incident_id=eq.${incidentId}`, callback, onStatus);
+  return () => { stopRecipients(); stopEscalations(); stopNotifications(); };
+}
+
+export function subscribeToIncidentEvidence(
+  incidentId: string,
+  callback: () => void,
+  onStatus?: (status: 'connected' | 'reconnecting' | 'offline') => void,
+): () => void {
+  return subscribe(
+    `evidence:${incidentId}:${Date.now()}`,
+    'incident_evidence',
+    `incident_id=eq.${incidentId}`,
+    callback,
+    onStatus,
+  );
 }
 
 export function subscribeToNewGuardianIncidents(guardianUserId: string, callback: (incidentId: string) => void, onStatus?: (status: 'connected' | 'reconnecting' | 'offline') => void): () => void {

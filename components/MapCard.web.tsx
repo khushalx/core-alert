@@ -34,7 +34,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E8EEF4',
+    backgroundColor: colors.surfaceElevated,
   },
   title: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 8 },
   text: { color: colors.textSecondary, fontSize: 12, marginTop: 4 },

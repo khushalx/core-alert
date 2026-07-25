@@ -20,17 +20,22 @@ import {
   getActiveIncident,
   getAssignedActiveIncidents,
   getIncidentById,
+  getIncidentEscalationEvents,
   getIncidentGuardians,
   getIncidentHistory,
   getIncidentLocations,
+  getIncidentRecipients,
   subscribeToIncident,
   subscribeToIncidentGuardians,
+  subscribeToIncidentDelivery,
   subscribeToIncidentLocations,
   subscribeToNewGuardianIncidents,
 } from '@/services/incidentService';
 import {
+  configureGuardianNotifications,
   getNotificationPermissionState,
   installNotificationObservers,
+  installPushTokenObserver,
   registerForPushNotifications,
 } from '@/services/notificationService';
 import { useApp } from '@/store/AppContext';
@@ -41,6 +46,8 @@ import type {
   ConnectionState,
   GuardianRelationship,
   IncidentGuardian,
+  IncidentEscalationEvent,
+  IncidentRecipient,
   NotificationPermissionState,
   PushTokenState,
 } from '@/types/cloud';
@@ -50,6 +57,8 @@ type CloudCache = {
   incidents: CloudIncident[];
   activeIncident: CloudIncident | null;
   incidentGuardians: IncidentGuardian[];
+  incidentRecipients: IncidentRecipient[];
+  incidentEvents: IncidentEscalationEvent[];
 };
 
 type ConnectedContextValue = {
@@ -63,6 +72,8 @@ type ConnectedContextValue = {
   incidents: CloudIncident[];
   activeIncident: CloudIncident | null;
   incidentGuardians: IncidentGuardian[];
+  incidentRecipients: IncidentRecipient[];
+  incidentEvents: IncidentEscalationEvent[];
   guardianAlert: ActiveGuardianAlert | null;
   notificationPermission: NotificationPermissionState;
   pushTokenState: PushTokenState;
@@ -97,6 +108,8 @@ export function ConnectedProvider({ children }: PropsWithChildren) {
   const [incidents, setIncidents] = useState<CloudIncident[]>([]);
   const [activeIncident, setActiveIncident] = useState<CloudIncident | null>(null);
   const [incidentGuardians, setIncidentGuardians] = useState<IncidentGuardian[]>([]);
+  const [incidentRecipients, setIncidentRecipients] = useState<IncidentRecipient[]>([]);
+  const [incidentEvents, setIncidentEvents] = useState<IncidentEscalationEvent[]>([]);
   const [guardianAlert, setGuardianAlert] = useState<ActiveGuardianAlert | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionState>('unknown');
   const [pushTokenState, setPushTokenState] = useState<PushTokenState>('not-registered');
@@ -143,20 +156,35 @@ export function ConnectedProvider({ children }: PropsWithChildren) {
         getAssignedActiveIncidents(),
       ]);
       if (refreshId !== activeRefresh.current) return;
-      const nextIncidentGuardians = nextActive ? await getIncidentGuardians(nextActive.id) : [];
+      const [nextIncidentGuardians, nextIncidentRecipients, nextIncidentEvents] = nextActive
+        ? await Promise.all([
+            getIncidentGuardians(nextActive.id),
+            getIncidentRecipients(nextActive.id),
+            getIncidentEscalationEvents(nextActive.id),
+          ])
+        : [[], [], []];
       setGuardians(nextGuardians);
       setIncomingRequests(nextRequests);
       setPeopleIProtect(nextProtected);
       setIncidents(nextIncidents);
       setActiveIncident(nextActive);
       setIncidentGuardians(nextIncidentGuardians);
+      setIncidentRecipients(nextIncidentRecipients);
+      setIncidentEvents(nextIncidentEvents);
       const assignedIncidents = await Promise.all(assigned.slice(0, 10).map((item) => getIncidentById(item.incident_id)));
       const activeAssigned = assignedIncidents.find((item) => item?.status === 'active');
       if (activeAssigned) await loadGuardianAlert(activeAssigned.id);
       else setGuardianAlert(null);
       setError(null);
       setConnection('connected');
-      await persistCache({ guardians: nextGuardians, incidents: nextIncidents, activeIncident: nextActive, incidentGuardians: nextIncidentGuardians });
+      await persistCache({
+        guardians: nextGuardians,
+        incidents: nextIncidents,
+        activeIncident: nextActive,
+        incidentGuardians: nextIncidentGuardians,
+        incidentRecipients: nextIncidentRecipients,
+        incidentEvents: nextIncidentEvents,
+      });
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Connected safety data could not be refreshed.');
       setConnection('reconnecting');
@@ -171,7 +199,7 @@ export function ConnectedProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!user) {
       setGuardians([]); setIncomingRequests([]); setPeopleIProtect([]); setIncidents([]);
-      setActiveIncident(null); setIncidentGuardians([]); setGuardianAlert(null); setLoading(false);
+      setActiveIncident(null); setIncidentGuardians([]); setIncidentRecipients([]); setIncidentEvents([]); setGuardianAlert(null); setLoading(false);
       return;
     }
     let active = true;
@@ -182,6 +210,7 @@ export function ConnectedProvider({ children }: PropsWithChildren) {
         const cached = JSON.parse(raw) as CloudCache;
         setGuardians(cached.guardians ?? []); setIncidents(cached.incidents ?? []);
         setActiveIncident(cached.activeIncident ?? null); setIncidentGuardians(cached.incidentGuardians ?? []);
+        setIncidentRecipients(cached.incidentRecipients ?? []); setIncidentEvents(cached.incidentEvents ?? []);
       } catch { /* Ignore invalid cache and refresh from Supabase. */ }
     }).finally(() => { if (active) void refresh(); });
     void importPendingFirstGuardian().then((created) => {
@@ -189,7 +218,23 @@ export function ConnectedProvider({ children }: PropsWithChildren) {
     }).catch((importError) => {
       if (active && __DEV__) console.warn('Pending guardian import failed', importError instanceof Error ? importError.message : 'unknown');
     });
-    void getNotificationPermissionState().then((status) => { if (active) setNotificationPermission(status); });
+    void configureGuardianNotifications().catch(() => undefined);
+    // A guardian cannot receive an out-of-app SOS until this installation has
+    // both notification permission and a cloud push token. Register at signed-
+    // in startup instead of relying on the user discovering a Settings row.
+    // The OS owns the permission prompt and the token upsert is idempotent.
+    void registerForPushNotifications(user.id).then((result) => {
+      if (!active) return;
+      setNotificationPermission(result.permission);
+      setPushTokenState(result.tokenState);
+      setPushMessage(result.message);
+    }).catch((registrationError) => {
+      if (!active) return;
+      setPushTokenState('error');
+      setPushMessage(registrationError instanceof Error
+        ? registrationError.message
+        : 'Push notifications could not be configured on this device.');
+    });
     void AsyncStorage.getItem(migrationKey(user.id)).then((value) => { if (active) setMigrationDismissed(value === 'complete' || value === 'dismissed'); });
     return () => { active = false; activeRefresh.current += 1; };
   }, [refresh, showToast, user]);
@@ -208,10 +253,16 @@ export function ConnectedProvider({ children }: PropsWithChildren) {
     const refreshActive = () => void refresh();
     const stopIncident = subscribeToIncident(incidentId, refreshActive, setConnection);
     const stopGuardians = subscribeToIncidentGuardians(incidentId, refreshActive, setConnection);
-    return () => { stopIncident(); stopGuardians(); };
+    const stopDelivery = subscribeToIncidentDelivery(incidentId, refreshActive, setConnection);
+    return () => { stopIncident(); stopGuardians(); stopDelivery(); };
   }, [activeIncident?.id, refresh]);
 
-  const localActiveIncidentId = state.sosState.stage === 'active' ? state.sosState.incidentId : null;
+  const localActiveIncidentId =
+    state.sosState.stage === 'active' ||
+    state.sosState.stage === 'ending' ||
+    state.sosState.stage === 'ending_failed'
+      ? state.sosState.incidentId
+      : null;
   useEffect(() => {
     if (localActiveIncidentId && activeIncident?.id !== localActiveIncidentId) void refresh();
   }, [activeIncident?.id, localActiveIncidentId, refresh]);
@@ -232,7 +283,8 @@ export function ConnectedProvider({ children }: PropsWithChildren) {
       else { setConnection('connected'); if (user) void refresh(); }
     });
     const removeNotifications = user ? installNotificationObservers((url) => router.push(url as never)) : () => undefined;
-    return () => { unsubscribeNetwork(); removeNotifications(); };
+    const removePushTokenObserver = user ? installPushTokenObserver(user.id) : () => undefined;
+    return () => { unsubscribeNetwork(); removeNotifications(); removePushTokenObserver(); };
   }, [refresh, user]);
 
   const createGuardian = useCallback(async (input: GuardianInvitationInput) => {
@@ -276,11 +328,11 @@ export function ConnectedProvider({ children }: PropsWithChildren) {
 
   const value = useMemo<ConnectedContextValue>(() => ({
     loading, refreshing, error, connection, guardians, incomingRequests, peopleIProtect, incidents, activeIncident,
-    incidentGuardians, guardianAlert, notificationPermission, pushTokenState, pushMessage, profileMigrationAvailable,
+    incidentGuardians, incidentRecipients, incidentEvents, guardianAlert, notificationPermission, pushTokenState, pushMessage, profileMigrationAvailable,
     hasLocalDemoGuardians: state.guardians.some((item) => item.id.startsWith('guardian-maya') || item.id.startsWith('guardian-arjun')),
     refresh, createGuardian, respondToInvite, makePrimary, removeGuardian, registerPush, respondToIncident,
     importLocalProfile, dismissLocalProfileImport,
-  }), [activeIncident, connection, createGuardian, dismissLocalProfileImport, error, guardianAlert, guardians, importLocalProfile, incidentGuardians, incomingRequests, incidents, loading, makePrimary, notificationPermission, peopleIProtect, profileMigrationAvailable, pushMessage, pushTokenState, refresh, refreshing, removeGuardian, registerPush, respondToIncident, state.guardians]);
+  }), [activeIncident, connection, createGuardian, dismissLocalProfileImport, error, guardianAlert, guardians, importLocalProfile, incidentEvents, incidentGuardians, incidentRecipients, incomingRequests, incidents, loading, makePrimary, notificationPermission, peopleIProtect, profileMigrationAvailable, pushMessage, pushTokenState, refresh, refreshing, removeGuardian, registerPush, respondToIncident, state.guardians]);
 
   return <ConnectedContext.Provider value={value}>{children}</ConnectedContext.Provider>;
 }

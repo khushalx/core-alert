@@ -34,6 +34,11 @@ yarn-error.*
 .env
 .env.local
 .env*.local
+supabase/functions/.env
+
+# local tooling
+.idea/
+supabase/.temp/
 
 # typescript
 *.tsbuildinfo

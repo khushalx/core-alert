@@ -3,6 +3,7 @@ import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 
 import com.facebook.react.ReactActivity
@@ -19,14 +20,32 @@ class MainActivity : ReactActivity() {
       event.action == KeyEvent.ACTION_DOWN &&
       event.repeatCount == 0
     ) {
-      (application as? MainApplication)
-        ?.reactHost
-        ?.currentReactContext
-        ?.getNativeModule(CoreAlertHardwareModule::class.java)
-        ?.emitVolumeDownPress(event)
+      val result = CoreAlertVolumeSequenceManager.recordPress(this, event.eventTime)
+      if (!result.duplicate) {
+        Log.d(CORE_ALERT_VOLUME_TAG, "MainActivity received volume down")
+        CoreAlertVolumeEventBus.publishVolumeDown(
+          event,
+          captureSource = "activity",
+          handledByNativeProtection = true,
+          nativePressCount = result.count
+        )
+        if (result.triggered && !CoreAlertProtectionStore.isPracticeMode(this)) {
+          CoreAlertNativeCountdown.start(this, CoreAlertProtectionStore.config(this))
+        }
+      }
+    } else if (
+      event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN &&
+      event.action == KeyEvent.ACTION_DOWN &&
+      BuildConfig.DEBUG
+    ) {
+      Log.d(
+        CORE_ALERT_VOLUME_TAG,
+        "MainActivity ignored repeat event repeatCount=${event.repeatCount}"
+      )
     }
 
-    // Observe the press, then preserve Android's normal volume behaviour.
+    // Observe the initial press without consuming it, so Android keeps normal
+    // media-volume behavior even at the minimum volume.
     return super.dispatchKeyEvent(event)
   }
 
@@ -39,6 +58,21 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    CoreAlertProtectionStore.setActivityForeground(this, true)
+  }
+
+  override fun onPause() {
+    CoreAlertProtectionStore.setActivityForeground(this, false)
+    super.onPause()
+  }
+
+  override fun onDestroy() {
+    CoreAlertProtectionStore.setActivityForeground(this, false)
+    super.onDestroy()
   }
 
   /**
@@ -79,5 +113,9 @@ class MainActivity : ReactActivity() {
       // Use the default back button implementation on Android S
       // because it's doing more than [Activity.moveTaskToBack] in fact.
       super.invokeDefaultOnBackPressed()
+  }
+
+  companion object {
+    private const val CORE_ALERT_VOLUME_TAG = "CoreAlertVolume"
   }
 }

@@ -5,6 +5,10 @@ export type GuardianRelationship = Database['public']['Tables']['guardian_relati
 export type CloudIncident = Database['public']['Tables']['incidents']['Row'];
 export type IncidentLocation = Database['public']['Tables']['incident_locations']['Row'];
 export type IncidentGuardian = Database['public']['Tables']['incident_guardians']['Row'];
+export type IncidentRecipient = Database['public']['Tables']['incident_recipients']['Row'];
+export type IncidentEscalationEvent = Database['public']['Tables']['incident_escalation_events']['Row'];
+export type NotificationDelivery = Database['public']['Tables']['notification_deliveries']['Row'];
+export type IncidentEvidence = Database['public']['Tables']['incident_evidence']['Row'];
 
 export type ConnectionState = 'connected' | 'reconnecting' | 'offline';
 export type NotificationPermissionState = 'unknown' | 'granted' | 'denied' | 'unavailable';

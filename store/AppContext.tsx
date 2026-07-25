@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
+import { router } from 'expo-router';
 import { AppState } from 'react-native';
 import {
   createContext,
@@ -17,6 +18,23 @@ import {
 import { requestEmergencyTrigger } from '@/services/emergencyTrigger';
 import { hardwareTriggerService } from '@/services/hardwareTriggerService';
 import {
+  clearNativeIncident,
+  beginNativeSosCountdown,
+  beginNativeSosEnding,
+  cancelNativeSosCountdown,
+  claimNativeSosActivation,
+  completeNativeSosEnd,
+  getNativeProtectionDiagnostics,
+  markNativeSosActivationFailed,
+  markNativeSosActive,
+  markNativeSosEndingFailed,
+  requestNativeEvidencePermissions,
+  restoreNativeSosActive,
+  startNativeEvidenceCapture,
+  stopNativeEvidenceCapture,
+  stopNativeLocation,
+} from '@/services/hardwareTriggerAdapter';
+import {
   assignGuardiansToIncident,
   createIncident,
   getActiveIncident,
@@ -27,8 +45,14 @@ import {
 } from '@/services/incidentService';
 import { liveLocationService } from '@/services/liveLocationService';
 import { offlineLocationQueue } from '@/services/offlineLocationQueue';
+import { syncNativeProtection } from '@/services/nativeProtectionService';
+import {
+  createActivationId,
+  sosLifecycleCoordinator,
+} from '@/services/sosLifecycleCoordinator';
 import { useAuth } from '@/store/AuthContext';
 import type {
+  Coordinates,
   EmergencyProfile,
   Guardian,
   Incident,
@@ -161,23 +185,36 @@ type AppContextValue = {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+type OngoingSosState = Extract<SosState, { incidentCoordinates: Coordinates | null }>;
+
+function isOngoingSosState(sosState: SosState): sosState is OngoingSosState {
+  return sosState.stage === 'active' ||
+    sosState.stage === 'ending' ||
+    sosState.stage === 'ending_failed';
+}
+
 function normalizeStoredState(value: Partial<PersistedAppState>): PersistedAppState {
   const storedSosState = value.sosState ?? initialPersistedState.sosState;
-  const sosState: SosState = storedSosState.stage === 'idle'
-    ? storedSosState
-    : storedSosState.stage === 'countdown'
-      ? { ...storedSosState, source: storedSosState.source ?? 'manual-test' }
-      : storedSosState.incidentId
-        ? {
-          ...storedSosState,
-          source: storedSosState.source ?? 'manual-test',
-          incidentId: storedSosState.incidentId,
-          isDemo: storedSosState.isDemo ?? true,
-          locationStatus: storedSosState.locationStatus ?? 'unavailable',
-          guardianStatus: storedSosState.guardianStatus ?? 'none',
-          issues: storedSosState.issues ?? [],
-        }
-        : { stage: 'idle' as const };
+  let sosState: SosState = { stage: 'idle' };
+  if (storedSosState.stage === 'countdown') {
+    sosState = {
+      ...storedSosState,
+      activationId: storedSosState.activationId ?? createActivationId(),
+      source: storedSosState.source ?? 'manual-test',
+    };
+  } else if (isOngoingSosState(storedSosState) && storedSosState.incidentId) {
+    sosState = {
+      ...storedSosState,
+      stage: 'active',
+      activationId: storedSosState.activationId ?? null,
+      source: storedSosState.source ?? 'manual-test',
+      incidentId: storedSosState.incidentId,
+      isDemo: storedSosState.isDemo ?? true,
+      locationStatus: storedSosState.locationStatus ?? 'unavailable',
+      guardianStatus: storedSosState.guardianStatus ?? 'none',
+      issues: storedSosState.issues ?? [],
+    };
+  }
   return {
     ...initialPersistedState,
     ...value,
@@ -193,7 +230,7 @@ function normalizeStoredState(value: Partial<PersistedAppState>): PersistedAppSt
 }
 
 export function AppProvider({ children }: PropsWithChildren) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [state, setState] = useState<PersistedAppState>(initialPersistedState);
   const [location, setLocation] = useState<LocationState>(initialLocation);
   const [hydrated, setHydrated] = useState(false);
@@ -381,14 +418,26 @@ export function AppProvider({ children }: PropsWithChildren) {
   }, []);
 
   const startSos = useCallback(async (source: SOSActivationSource) => {
-    if (stateRef.current.sosState.stage !== 'idle') return false;
+    if (!user) {
+      showToast('Sign in before starting an SOS');
+      return false;
+    }
+    const activationId = createActivationId();
+    if (!sosLifecycleCoordinator.beginCountdown(activationId, source)) return false;
     const trigger = await requestEmergencyTrigger(source);
+    const nativeAccepted = await beginNativeSosCountdown(activationId, trigger.source).catch(() => false);
+    if (!nativeAccepted) {
+      sosLifecycleCoordinator.cancelCountdown(activationId);
+      showToast('Core Alert is already handling an emergency.');
+      return false;
+    }
     setState((current) => {
       if (current.sosState.stage !== 'idle') return current;
       return {
         ...current,
         sosState: {
           stage: 'countdown',
+          activationId,
           startedAt: trigger.requestedAt,
           duration: current.preferences.countdownDuration,
           source: trigger.source,
@@ -398,20 +447,29 @@ export function AppProvider({ children }: PropsWithChildren) {
     if (stateRef.current.preferences.hapticsEnabled) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
     }
+    // The current Activity is visible during the existing countdown. Native
+    // Android owns the permission request and all subsequent recording.
+    void requestNativeEvidencePermissions();
     return true;
-  }, []);
+  }, [showToast, user]);
 
   const startSosTest = useCallback(() => startSos('manual-test'), [startSos]);
 
   const updateActiveSos = useCallback((incidentId: string, updates: Partial<Extract<SosState, { stage: 'active' }>>) => {
-    setState((current) => current.sosState.stage === 'active' && current.sosState.incidentId === incidentId
+    setState((current) => isOngoingSosState(current.sosState) &&
+      current.sosState.stage !== 'ending' &&
+      current.sosState.incidentId === incidentId
       ? { ...current, sosState: { ...current.sosState, ...updates } }
       : current);
   }, []);
 
   const addActiveIssue = useCallback((incidentId: string, issue: string) => {
     setState((current) => {
-      if (current.sosState.stage !== 'active' || current.sosState.incidentId !== incidentId) return current;
+      if (
+        !isOngoingSosState(current.sosState) ||
+        current.sosState.stage === 'ending' ||
+        current.sosState.incidentId !== incidentId
+      ) return current;
       if (current.sosState.issues.includes(issue)) return current;
       return { ...current, sosState: { ...current.sosState, issues: [...current.sosState.issues, issue] } };
     });
@@ -419,7 +477,7 @@ export function AppProvider({ children }: PropsWithChildren) {
 
   const beginLiveLocation = useCallback(async (incidentId: string) => {
     try {
-      await liveLocationService.start({
+      await liveLocationService.start(incidentId, {
         onLocation: async (point) => {
           try {
             await updateIncidentLocation(incidentId, point);
@@ -440,6 +498,7 @@ export function AppProvider({ children }: PropsWithChildren) {
           addActiveIssue(incidentId, message);
         },
       });
+      await stopNativeLocation().catch(() => false);
       updateActiveSos(incidentId, { locationStatus: 'sharing' });
     } catch (trackingError) {
       updateActiveSos(incidentId, { locationStatus: 'unavailable' });
@@ -450,74 +509,112 @@ export function AppProvider({ children }: PropsWithChildren) {
   const activateSosTest = useCallback(async () => {
     const countdown = stateRef.current.sosState;
     if (countdown.stage !== 'countdown') return;
+    if (!sosLifecycleCoordinator.claimActivation(countdown.activationId)) return;
+    setState((current) => current.sosState.stage === 'countdown' &&
+      current.sosState.activationId === countdown.activationId
+      ? {
+        ...current,
+        sosState: {
+          stage: 'activating',
+          activationId: countdown.activationId,
+          startedAt: countdown.startedAt,
+          source: countdown.source,
+        },
+      }
+      : current);
+    if (stateRef.current.preferences.hapticsEnabled) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    }
+    const nativeClaimed = await claimNativeSosActivation(countdown.activationId).catch(() => false);
+    if (!nativeClaimed) {
+      sosLifecycleCoordinator.activationFailed(countdown.activationId);
+      sosLifecycleCoordinator.reset();
+      setState((current) => ({ ...current, sosState: { stage: 'idle' } }));
+      showToast('This SOS activation was already handled.');
+      return;
+    }
     if (!user) {
+      sosLifecycleCoordinator.activationFailed(countdown.activationId);
+      sosLifecycleCoordinator.reset();
+      void markNativeSosActivationFailed(countdown.activationId, 'Authentication is required.');
       setState((current) => ({ ...current, sosState: { stage: 'idle' } }));
       showToast('Sign in before starting an SOS');
       return;
     }
 
-    let point: IncidentPoint | null = location.coordinates
+    const point: IncidentPoint | null = location.coordinates
       ? { ...location.coordinates, accuracy: null }
       : null;
     const activationIssues: string[] = [];
-    try {
-      const permission = await Location.getForegroundPermissionsAsync();
-      if (permission.status === Location.PermissionStatus.GRANTED) {
-        const position = await Promise.race([
-          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
-          new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('LOCATION_TIMEOUT')), 6_000)),
-        ]);
-        point = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy };
-        setLocation({ permission: 'granted', coordinates: { latitude: point.latitude, longitude: point.longitude }, loading: false, error: null });
-      } else {
-        activationIssues.push('Location permission is not available. The SOS will continue without live location.');
-      }
-    } catch {
-      activationIssues.push('Current location was unavailable. Core Alert will retry during the incident.');
+    if (location.permission === 'denied') {
+      activationIssues.push('Location permission is not available. The SOS will continue without live location.');
+    } else if (!point) {
+      activationIssues.push('Current location is still being acquired. Core Alert will retry during the incident.');
     }
 
     let incident;
     try {
       incident = await createIncident({
+        activationId: countdown.activationId,
         activationSource: countdown.source,
         isDemo: stateRef.current.preferences.demoModeEnabled,
         location: point,
       });
     } catch (incidentError) {
+      const message = incidentError instanceof Error ? incidentError.message : 'The SOS could not be created.';
+      sosLifecycleCoordinator.activationFailed(countdown.activationId);
+      sosLifecycleCoordinator.reset();
+      void markNativeSosActivationFailed(countdown.activationId, message);
       setState((current) => ({ ...current, sosState: { stage: 'idle' } }));
       hardwareTriggerService.reset('Incident creation failed', true);
-      showToast(incidentError instanceof Error ? incidentError.message : 'The SOS could not be created.');
+      showToast(message);
       return;
     }
 
+    sosLifecycleCoordinator.activated(countdown.activationId, incident.id);
+    const nativeMarkedActive = await markNativeSosActive(countdown.activationId, incident.id)
+      .catch(() => false);
+    if (!nativeMarkedActive) {
+      await restoreNativeSosActive(incident.id).catch(() => false);
+    }
     setState((current) => ({
       ...current,
       sosState: {
         stage: 'active',
+        activationId: countdown.activationId,
         startedAt: incident.started_at,
         incidentCoordinates: point ? { latitude: point.latitude, longitude: point.longitude } : null,
         source: countdown.source,
         incidentId: incident.id,
         isDemo: incident.is_demo,
-        locationStatus: point ? 'sharing' : 'unavailable',
+        locationStatus: 'reconnecting',
         guardianStatus: 'assigning',
         issues: activationIssues,
       },
     }));
 
+    void startNativeEvidenceCapture(incident.id, incident.is_demo).then((started) => {
+      if (!started) {
+        addActiveIssue(
+          incident.id,
+          'Emergency evidence was unavailable. The SOS and guardian alerts continued.',
+        );
+      }
+      return hardwareTriggerService.refreshNativeDiagnostics();
+    });
+    void beginLiveLocation(incident.id);
+
     void (async () => {
       try {
         const assignments = await assignGuardiansToIncident(incident.id);
-        if (assignments.length === 0) {
-          updateActiveSos(incident.id, { guardianStatus: 'none' });
-          addActiveIssue(incident.id, 'No accepted linked guardians were available for this SOS.');
-          return;
-        }
         updateActiveSos(incident.id, { guardianStatus: 'alerting' });
         try {
           const delivery = await sendIncidentNotifications(incident.id);
-          updateActiveSos(incident.id, { guardianStatus: delivery.delivered > 0 ? 'ready' : 'failed' });
-          if (delivery.failed > 0) addActiveIssue(incident.id, `${delivery.failed} guardian notification${delivery.failed === 1 ? '' : 's'} could not be delivered.`);
+          updateActiveSos(incident.id, { guardianStatus: delivery.delivered > 0 ? 'ready' : assignments.length === 0 ? 'none' : 'failed' });
+          if (assignments.length === 0 && delivery.smsSent === 0) {
+            addActiveIssue(incident.id, 'No linked guardian or configured SMS recipient accepted this SOS alert.');
+          }
+          if (delivery.failed > 0) addActiveIssue(incident.id, `${delivery.failed} guardian notification${delivery.failed === 1 ? '' : 's'} were not accepted by a provider.`);
         } catch (notificationError) {
           updateActiveSos(incident.id, { guardianStatus: 'failed' });
           addActiveIssue(incident.id, notificationError instanceof Error ? notificationError.message : 'Guardian notification delivery failed.');
@@ -527,13 +624,16 @@ export function AppProvider({ children }: PropsWithChildren) {
         addActiveIssue(incident.id, assignmentError instanceof Error ? assignmentError.message : 'Guardians could not be assigned.');
       }
     })();
-    void beginLiveLocation(incident.id);
-  }, [addActiveIssue, beginLiveLocation, location.coordinates, showToast, updateActiveSos, user]);
+  }, [addActiveIssue, beginLiveLocation, location.coordinates, location.permission, showToast, updateActiveSos, user]);
 
   const cancelSosTest = useCallback(() => {
     const countdown = stateRef.current.sosState;
+    if (countdown.stage !== 'countdown') return;
+    if (!sosLifecycleCoordinator.cancelCountdown(countdown.activationId)) return;
+    void cancelNativeSosCountdown(countdown.activationId);
     if (countdown.stage === 'countdown' && user) {
       void createIncident({
+        activationId: countdown.activationId,
         activationSource: countdown.source,
         isDemo: stateRef.current.preferences.demoModeEnabled,
         status: 'cancelled',
@@ -572,19 +672,59 @@ export function AppProvider({ children }: PropsWithChildren) {
 
   const endSosTest = useCallback(async () => {
     const active = stateRef.current.sosState;
-    if (active.stage !== 'active') return;
-    if (active.incidentId) {
-      try {
-        await resolveIncident(active.incidentId);
-      } catch (resolutionError) {
-        addActiveIssue(active.incidentId, resolutionError instanceof Error ? resolutionError.message : 'The SOS could not be ended.');
-        showToast('The SOS is still active. Check your connection and try again.');
-        return;
-      }
+    if (!isOngoingSosState(active) || active.stage === 'ending' || !active.incidentId) return;
+    const incidentId = active.incidentId;
+    if (!sosLifecycleCoordinator.beginEnding(incidentId)) return;
+    void beginNativeSosEnding(incidentId);
+    setState((current) => (
+      isOngoingSosState(current.sosState) &&
+      current.sosState.stage !== 'ending' &&
+      current.sosState.incidentId === incidentId
+    ) ? { ...current, sosState: { ...current.sosState, stage: 'ending' } } : current);
+
+    await Promise.allSettled([
+      liveLocationService.stop(),
+      stopNativeLocation(),
+    ]);
+
+    try {
+      await resolveIncident(incidentId);
+    } catch (resolutionError) {
+      const message = 'Core Alert could not confirm that the SOS ended. Check your connection and try again.';
+      sosLifecycleCoordinator.endingFailed(incidentId);
+      void markNativeSosEndingFailed(incidentId, message);
+      setState((current) => current.sosState.stage === 'ending' &&
+        current.sosState.incidentId === incidentId
+        ? {
+          ...current,
+          sosState: {
+            ...current.sosState,
+            stage: 'ending_failed',
+            issues: [...current.sosState.issues.filter((issue) => issue !== message), message],
+          },
+        }
+        : current);
+      // Resolution was not confirmed, so the incident remains active. Live
+      // location is resumed and evidence never stopped during the failed
+      // network operation.
+      void beginLiveLocation(incidentId);
+      showToast(message);
+      return;
     }
-    await liveLocationService.stop();
+
+    sosLifecycleCoordinator.resolved(incidentId);
+    await Promise.allSettled([
+      liveLocationService.stop(),
+      stopNativeEvidenceCapture(),
+      stopNativeLocation(),
+      completeNativeSosEnd(incidentId),
+      offlineLocationQueue.removeIncident(incidentId),
+    ]);
     setState((current) => {
-      if (current.sosState.stage !== 'active') return current;
+      if (
+        current.sosState.stage !== 'ending' ||
+        current.sosState.incidentId !== incidentId
+      ) return current;
       const now = new Date().toISOString();
       const incident: Incident = {
         id: `test-${Date.now()}`,
@@ -608,30 +748,64 @@ export function AppProvider({ children }: PropsWithChildren) {
       };
       return {
         ...current,
-        sosState: { stage: 'idle' },
+        sosState: { stage: 'resolved', incidentId, endedAt: now },
         incidents: [incident, ...current.incidents],
       };
     });
+    setTimeout(() => {
+      sosLifecycleCoordinator.reset();
+      setState((current) => current.sosState.stage === 'resolved' &&
+        current.sosState.incidentId === incidentId
+        ? { ...current, sosState: { stage: 'idle' } }
+        : current);
+      router.replace('/(tabs)/activity');
+    }, 0);
     hardwareTriggerService.reset('SOS test ended', true);
     showToast('SOS ended and saved to Activity');
     if (stateRef.current.preferences.hapticsEnabled) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     }
-  }, [addActiveIssue, location.coordinates, showToast]);
+  }, [beginLiveLocation, location.coordinates, showToast]);
 
   useEffect(() => {
-    if (!hydrated || !user) return;
+    if (!hydrated || authLoading || !user) return;
     let active = true;
-    void getActiveIncident().then((incident) => {
-      if (!active || !incident || stateRef.current.sosState.stage !== 'idle') return;
+    void Promise.all([
+      getActiveIncident(),
+      getNativeProtectionDiagnostics().catch(() => null),
+    ]).then(([incident, nativeDiagnostics]) => {
+      if (!active) return;
+      if (!incident) {
+        if (
+          nativeDiagnostics?.nativeLifecycleState === 'countdown' ||
+          nativeDiagnostics?.nativeLifecycleState === 'activating'
+        ) return;
+        const local = stateRef.current.sosState;
+        if (local.stage !== 'countdown' && local.stage !== 'activating') {
+          sosLifecycleCoordinator.forceIdle();
+          if (isOngoingSosState(local) || local.stage === 'resolved') {
+            setState((current) => ({ ...current, sosState: { stage: 'idle' } }));
+          }
+          void Promise.allSettled([
+            liveLocationService.stop(),
+            stopNativeEvidenceCapture(),
+            stopNativeLocation(),
+            clearNativeIncident(),
+          ]);
+        }
+        return;
+      }
       const source: SOSActivationSource = incident.activation_source === 'volume-shortcut'
         || incident.activation_source === 'developer-simulation'
         ? incident.activation_source
         : 'manual-test';
+      sosLifecycleCoordinator.restoreActive(incident.id, source);
+      void restoreNativeSosActive(incident.id);
       setState((current) => ({
         ...current,
         sosState: {
           stage: 'active',
+          activationId: incident.native_activation_id,
           startedAt: incident.started_at,
           incidentCoordinates: incident.incident_latitude !== null && incident.incident_longitude !== null
             ? { latitude: incident.incident_latitude, longitude: incident.incident_longitude }
@@ -645,17 +819,33 @@ export function AppProvider({ children }: PropsWithChildren) {
         },
       }));
       void beginLiveLocation(incident.id);
+      void startNativeEvidenceCapture(incident.id, incident.is_demo).then((started) => {
+        if (!started) {
+          addActiveIssue(
+            incident.id,
+            'Emergency evidence is unavailable. The active SOS and guardian updates are continuing.',
+          );
+        }
+        return hardwareTriggerService.refreshNativeDiagnostics();
+      });
     }).catch((restoreError) => {
       if (__DEV__) console.warn('Active incident restoration failed', restoreError instanceof Error ? restoreError.message : 'unknown');
     });
     return () => { active = false; };
-  }, [beginLiveLocation, hydrated, user]);
+  }, [addActiveIssue, authLoading, beginLiveLocation, hydrated, user]);
 
   useEffect(() => {
     if (!user) return;
     const unsubscribe = NetInfo.addEventListener((network) => {
       if (!network.isConnected || network.isInternetReachable === false) return;
-      void offlineLocationQueue.flush(async (queued) => {
+      const current = stateRef.current.sosState;
+      if (
+        !isOngoingSosState(current) ||
+        current.stage === 'ending' ||
+        !current.incidentId
+      ) return;
+      const incidentId = current.incidentId;
+      void offlineLocationQueue.flushIncident(incidentId, async (queued) => {
         await updateIncidentLocation(queued.incidentId, {
           latitude: queued.latitude,
           longitude: queued.longitude,
@@ -663,9 +853,14 @@ export function AppProvider({ children }: PropsWithChildren) {
           recordedAt: queued.recordedAt,
         });
       }).then(({ sent }) => {
-        const current = stateRef.current.sosState;
-        if (sent > 0 && current.stage === 'active' && current.incidentId) {
-          updateActiveSos(current.incidentId, { locationStatus: 'sharing' });
+        const latest = stateRef.current.sosState;
+        if (
+          sent > 0 &&
+          isOngoingSosState(latest) &&
+          latest.stage !== 'ending' &&
+          latest.incidentId === incidentId
+        ) {
+          updateActiveSos(incidentId, { locationStatus: 'sharing' });
         }
       });
     });
@@ -676,9 +871,7 @@ export function AppProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     hardwareTriggerService.configure({
-      onActivate: async (source) => {
-        await startSos(source);
-      },
+      onActivate: (source) => startSos(source),
       onPress: (pressCount) => {
         const preferences = stateRef.current.preferences;
         if (!preferences.hapticsEnabled || !preferences.hardwareHapticsEnabled) return;
@@ -693,13 +886,38 @@ export function AppProvider({ children }: PropsWithChildren) {
   }, [showToast, startSos]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || authLoading) return;
     hardwareTriggerService.setContext({
       enabled: state.preferences.hardwareShortcutEnabled,
       sosBusy: state.sosState.stage !== 'idle',
     });
     if (AppState.currentState === 'active') void hardwareTriggerService.verifyAndAttach();
-  }, [hydrated, state.preferences.hardwareShortcutEnabled, state.sosState.stage]);
+  }, [authLoading, hydrated, state.preferences.hardwareShortcutEnabled, state.sosState.stage]);
+
+  useEffect(() => {
+    if (!hydrated || authLoading) return;
+    void syncNativeProtection({
+      userId: user?.id ?? null,
+      enabled: state.preferences.hardwareShortcutEnabled,
+      countdownSeconds: state.preferences.countdownDuration,
+      demoMode: state.preferences.demoModeEnabled,
+    }).then(() => hardwareTriggerService.refreshNativeDiagnostics())
+      .catch((error) => {
+        if (__DEV__) {
+          console.warn(
+            'Native protection sync failed',
+            error instanceof Error ? error.message : 'unknown',
+          );
+        }
+      });
+  }, [
+    hydrated,
+    authLoading,
+    state.preferences.countdownDuration,
+    state.preferences.demoModeEnabled,
+    state.preferences.hardwareShortcutEnabled,
+    user?.id,
+  ]);
 
   useEffect(() => {
     if (!hydrated) return;

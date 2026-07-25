@@ -96,16 +96,22 @@ it('prevents duplicate guardian emails', () => {
 
 it('creates a real incident and stores its original location', async () => {
   const created = { id: incidentId, user_id: userId, status: 'active', activation_source: 'manual-test', is_demo: true, started_at: new Date().toISOString() };
-  const locationInsert = jest.fn().mockResolvedValue({ error: null });
+  const rpc = jest.fn().mockResolvedValue({ data: created, error: null });
   mockRequireSupabase.mockReturnValue({
     auth: { getUser: jest.fn().mockResolvedValue({ data: { user: { id: userId } }, error: null }) },
-    from: jest.fn((table: string) => table === 'incidents'
-      ? { insert: () => ({ select: () => ({ single: async () => ({ data: created, error: null }) }) }) }
-      : { insert: locationInsert }),
+    rpc,
   });
-  const result = await createIncident({ activationSource: 'manual-test', isDemo: true, location: { latitude: 19.1, longitude: 72.8, accuracy: 8 } });
+  const result = await createIncident({
+    activationId: '6bce7cc4-60dc-44f0-a54d-f780bc07db9b',
+    activationSource: 'manual-test',
+    isDemo: true,
+    location: { latitude: 19.1, longitude: 72.8, accuracy: 8 },
+  });
   expect(result.id).toBe(incidentId);
-  expect(locationInsert).toHaveBeenCalledWith(expect.objectContaining({ incident_id: incidentId, latitude: 19.1 }));
+  expect(rpc).toHaveBeenCalledWith('create_or_restore_incident', expect.objectContaining({
+    activation_id: '6bce7cc4-60dc-44f0-a54d-f780bc07db9b',
+    requested_latitude: 19.1,
+  }));
 });
 
 it('assigns accepted guardians through the protected database function', async () => {
@@ -147,12 +153,35 @@ it('delivers realtime guardian acknowledgement events to the subscriber', () => 
 
 it('resolves an active incident without changing ownership', async () => {
   const resolved = { id: incidentId, user_id: userId, status: 'resolved' };
-  const chain = { eq: jest.fn(), select: jest.fn(), single: jest.fn() };
-  chain.eq.mockReturnValue(chain); chain.select.mockReturnValue(chain); chain.single.mockResolvedValue({ data: resolved, error: null });
-  mockRequireSupabase.mockReturnValue({ from: () => ({ update: () => chain }) });
+  const rpc = jest.fn().mockResolvedValue({ data: resolved, error: null });
+  mockRequireSupabase.mockReturnValue({ rpc });
   await expect(resolveIncident(incidentId)).resolves.toEqual(resolved);
-  expect(chain.eq).toHaveBeenCalledWith('id', incidentId);
-  expect(chain.eq).toHaveBeenCalledWith('status', 'active');
+  expect(rpc).toHaveBeenCalledWith('resolve_incident_idempotent', {
+    target_incident_id: incidentId,
+  });
+});
+
+it('falls back to an owner-scoped update when the resolve RPC is unavailable', async () => {
+  const resolved = { id: incidentId, user_id: userId, status: 'resolved' };
+  const maybeSingle = jest.fn().mockResolvedValue({ data: resolved, error: null });
+  const select = jest.fn(() => ({ maybeSingle }));
+  const statusEq = jest.fn(() => ({ select }));
+  const idEq = jest.fn(() => ({ eq: statusEq }));
+  const update = jest.fn(() => ({ eq: idEq }));
+  const from = jest.fn(() => ({ update }));
+  const rpc = jest.fn().mockResolvedValue({
+    data: null,
+    error: { code: 'PGRST202', message: 'Could not find the function public.resolve_incident_idempotent' },
+  });
+  mockRequireSupabase.mockReturnValue({ rpc, from });
+
+  await expect(resolveIncident(incidentId)).resolves.toEqual(resolved);
+  expect(update).toHaveBeenCalledWith(expect.objectContaining({
+    status: 'resolved',
+    ended_at: expect.any(String),
+  }));
+  expect(idEq).toHaveBeenCalledWith('id', incidentId);
+  expect(statusEq).toHaveBeenCalledWith('status', 'active');
 });
 
 it('queues offline locations and retries from the original incident id', async () => {
@@ -163,6 +192,21 @@ it('queues offline locations and retries from the original incident id', async (
   const sender = jest.fn().mockResolvedValue(undefined);
   await expect(queue.flush(sender)).resolves.toEqual({ sent: 1, remaining: 0 });
   expect(sender).toHaveBeenCalledWith(expect.objectContaining({ incidentId }));
+});
+
+it('flushes only the active incident queue and leaves unrelated incidents untouched', async () => {
+  const memory = new Map<string, string>();
+  const storage: QueueStorage = {
+    getItem: async (key) => memory.get(key) ?? null,
+    setItem: async (key, value) => { memory.set(key, value); },
+  };
+  const queue = new OfflineLocationQueue(storage);
+  await queue.enqueue({ incidentId: 'old-incident', latitude: 1, longitude: 2, accuracy: null, recordedAt: '2026-07-22T00:00:00Z' });
+  await queue.enqueue({ incidentId, latitude: 19, longitude: 72, accuracy: 5, recordedAt: '2026-07-23T00:00:00Z' });
+  const sender = jest.fn().mockResolvedValue(undefined);
+  await expect(queue.flushIncident(incidentId, sender)).resolves.toEqual({ sent: 1, remaining: 0 });
+  expect(sender).toHaveBeenCalledTimes(1);
+  await expect(queue.read()).resolves.toEqual([expect.objectContaining({ incidentId: 'old-incident' })]);
 });
 
 it('authorizes the notification Edge Function only for the incident owner', () => {

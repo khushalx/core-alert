@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker, Polyline } from 'react-native-maps';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { colors, radii } from '@/constants/theme';
@@ -28,22 +27,25 @@ export function MapCard({ coordinates, incidentCoordinates, height = 180, label,
 
   return (
     <View style={styles.container}>
-      <MapView
-        accessibilityLabel="Incident location map"
-        style={[styles.map, { height, pointerEvents: 'none' }]}
-        initialRegion={{ ...focus, latitudeDelta: 0.012, longitudeDelta: 0.012 }}
-        region={{ ...focus, latitudeDelta: 0.012, longitudeDelta: 0.012 }}>
-        {incidentCoordinates ? (
-          <Marker coordinate={incidentCoordinates} title="Incident location" pinColor={colors.red} />
-        ) : null}
-        {path.length > 1 ? <Polyline coordinates={path} strokeColor={colors.navy} strokeWidth={4} /> : null}
-        {coordinates ? <Marker coordinate={coordinates} title="Current position" pinColor={colors.navy} /> : null}
-      </MapView>
+      <View
+        accessibilityLabel={`Location preview: ${formatCoordinates(focus)}`}
+        style={[styles.preview, { height }]}>
+        <View style={[styles.gridLine, styles.gridHorizontalTop]} />
+        <View style={[styles.gridLine, styles.gridHorizontalBottom]} />
+        <View style={[styles.gridLine, styles.gridVerticalLeft]} />
+        <View style={[styles.gridLine, styles.gridVerticalRight]} />
+        <View style={styles.previewMarker}>
+          <Ionicons name="location" size={28} color={colors.white} />
+        </View>
+        <Text style={styles.previewTitle}>Secure location preview</Text>
+        <Text style={styles.previewCoordinates}>{formatCoordinates(focus)}</Text>
+        {path.length > 1 ? <Text style={styles.previewPath}>{path.length} recorded location points</Text> : null}
+      </View>
       <View style={styles.caption}>
         <View style={styles.availableDot} />
         <View style={styles.captionText}>
           <Text style={styles.captionTitle}>{label ?? 'Location available'}</Text>
-          <Text style={styles.coordinates}>{formatCoordinates(coordinates)}{path.length > 0 ? ` • ${path.length} points` : ''}</Text>
+          <Text style={styles.coordinates}>{formatCoordinates(focus)}{path.length > 0 ? ` • ${path.length} points` : ''}</Text>
         </View>
       </View>
     </View>
@@ -52,8 +54,32 @@ export function MapCard({ coordinates, incidentCoordinates, height = 180, label,
 
 const styles = StyleSheet.create({
   container: { overflow: 'hidden', borderRadius: radii.medium, borderWidth: 1, borderColor: colors.border },
-  map: { width: '100%' },
-  caption: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.white, padding: 13 },
+  preview: {
+    width: '100%',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#071426',
+  },
+  gridLine: { position: 'absolute', backgroundColor: '#17304A' },
+  gridHorizontalTop: { top: '33%', left: 0, right: 0, height: 1 },
+  gridHorizontalBottom: { top: '66%', left: 0, right: 0, height: 1 },
+  gridVerticalLeft: { left: '33%', top: 0, bottom: 0, width: 1 },
+  gridVerticalRight: { left: '66%', top: 0, bottom: 0, width: 1 },
+  previewMarker: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.red,
+    borderWidth: 6,
+    borderColor: '#45141D',
+  },
+  previewTitle: { color: colors.text, fontSize: 13, fontWeight: '800', marginTop: 10 },
+  previewCoordinates: { color: colors.textSecondary, fontSize: 11, marginTop: 3 },
+  previewPath: { color: colors.blueBright, fontSize: 10, fontWeight: '700', marginTop: 5 },
+  caption: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: 13 },
   availableDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.green, marginRight: 9 },
   captionText: { flex: 1 },
   captionTitle: { color: colors.text, fontSize: 13, fontWeight: '700' },
@@ -66,7 +92,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.backgroundSecondary,
   },
   placeholderTitle: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 8 },
   placeholderText: { color: colors.textSecondary, fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 4 },

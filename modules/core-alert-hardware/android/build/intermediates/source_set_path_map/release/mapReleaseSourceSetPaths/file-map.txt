@@ -1,0 +1,7 @@
+com.corealert.hardware.core-alert-hardware-pngs-0 /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/generated/res/pngs/release
+com.corealert.hardware.core-alert-hardware-resValues-1 /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/generated/res/resValues/release
+com.corealert.hardware.core-alert-hardware-mergeReleaseResources-2 /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/incremental/release/mergeReleaseResources/merged.dir
+com.corealert.hardware.core-alert-hardware-mergeReleaseResources-3 /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/incremental/release/mergeReleaseResources/stripped.dir
+com.corealert.hardware.core-alert-hardware-release-4 /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/build/intermediates/merged_res/release/mergeReleaseResources
+com.corealert.hardware.core-alert-hardware-main-5 /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/src/main/res
+com.corealert.hardware.core-alert-hardware-release-6 /Users/khushaldangar/Desktop/Core Alert/modules/core-alert-hardware/android/src/release/res

@@ -29,7 +29,7 @@ export function BottomSheet({
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
             <Pressable accessibilityLabel="Close" onPress={onClose} hitSlop={10} style={styles.close}>
-              <Ionicons name="close" size={21} color={colors.navy} />
+              <Ionicons name="close" size={21} color={colors.text} />
             </Pressable>
           </View>
           {children}
@@ -42,7 +42,9 @@ export function BottomSheet({
 const styles = StyleSheet.create({
   backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(11,31,51,0.48)' },
   sheet: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
     borderTopLeftRadius: radii.large,
     borderTopRightRadius: radii.large,
     paddingHorizontal: spacing.lg,
@@ -54,4 +56,3 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 20, fontWeight: '800' },
   close: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
 });
-

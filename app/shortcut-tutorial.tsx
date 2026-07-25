@@ -33,7 +33,7 @@ export default function ShortcutTutorialScreen() {
         </View>
 
         <Card style={styles.stepsCard}>
-          <Step number="1" title="Keep protection enabled" text="Core Alert must be open and active in this foreground prototype." />
+          <Step number="1" title="Keep protection enabled" text="Core Alert protection and its Android Accessibility permission must remain enabled." />
           <Step number="2" title="Press volume down five times" text="Complete five separate presses within three seconds." />
           <Step number="3" title="Cancel accidental alerts" text="Use the visible countdown before an SOS test becomes active." last />
         </Card>
