@@ -16,7 +16,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#050811",
-        "foregroundImage": "./assets/images/android-icon-foreground.png"
+        "foregroundImage": "./assets/images/android-icon-foreground.pngcommit"
       },
       "package": "com.corealert.prototype",
       "predictiveBackGestureEnabled": false,
